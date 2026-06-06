@@ -1,6 +1,6 @@
 // @ts-nocheck — Test fixtures create executable fake Pi binaries with Node built-ins.
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,6 +25,30 @@ function makeFakePi(source: string): string {
   writeFileSync(binary, `#!/usr/bin/env node\n${source}`);
   chmodSync(binary, 0o755);
   return binary;
+}
+
+function makeFixturePi(fixtureName: string): string {
+  const lines = readFileSync(join(process.cwd(), "src/provider/pi/__fixtures__", fixtureName), "utf8")
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length > 0);
+  return makeFakePi(`
+    import readline from "node:readline";
+    const fixtureLines = ${JSON.stringify(lines)};
+    const rl = readline.createInterface({ input: process.stdin });
+    rl.on("line", (line) => {
+      const command = JSON.parse(line);
+      if (command.type === "get_state") {
+        process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: { sessionId: "s1", isStreaming: false } }) + "\\n");
+        return;
+      }
+      if (command.type === "prompt") {
+        for (const fixtureLine of fixtureLines) {
+          process.stdout.write(fixtureLine + "\\n");
+        }
+        process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: {} }) + "\\n");
+      }
+    });
+  `);
 }
 
 function makeSettings(binaryPath: string): PiSettings {
@@ -81,46 +105,41 @@ it.effect("PiAdapter finalizes the turn when prompt returns success false", () =
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("PiAdapter attaches message and tool deltas to stable item ids", () =>
+it.effect("PiAdapter maps source-backed text turn fixtures", () =>
   Effect.gen(function* () {
-    const binaryPath = makeFakePi(`
-      import readline from "node:readline";
-      const rl = readline.createInterface({ input: process.stdin });
-      rl.on("line", (line) => {
-        const command = JSON.parse(line);
-        if (command.type === "get_state") {
-          process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: { sessionId: "s1", isStreaming: false } }) + "\\n");
-          return;
-        }
-        if (command.type === "prompt") {
-          process.stdout.write(JSON.stringify({ type: "message_start" }) + "\\n");
-          process.stdout.write(JSON.stringify({ type: "message_update", delta: "hello" }) + "\\n");
-          process.stdout.write(JSON.stringify({ type: "message_end" }) + "\\n");
-          process.stdout.write(JSON.stringify({ type: "tool_execution_start", toolCallId: "tool-1", toolName: "bash" }) + "\\n");
-          process.stdout.write(JSON.stringify({ type: "tool_execution_update", toolCallId: "tool-1", stdout: "ok" }) + "\\n");
-          process.stdout.write(JSON.stringify({ type: "tool_execution_end", toolCallId: "tool-1", toolName: "bash" }) + "\\n");
-          process.stdout.write(JSON.stringify({ type: "turn_end" }) + "\\n");
-          process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: {} }) + "\\n");
-        }
-      });
-    `);
-    const adapter = yield* makePiAdapter(makeSettings(binaryPath));
+    const adapter = yield* makePiAdapter(makeSettings(makeFixturePi("pi-text-turn.jsonl")));
     const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 12)).pipe(Effect.forkChild);
-    const threadId = ThreadId.make("pi-thread-streaming");
+    const threadId = ThreadId.make("pi-thread-text-fixture");
 
     yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
     yield* adapter.sendTurn({ threadId, input: "hello" });
 
     const events = [...(yield* Fiber.join(eventsFiber))];
+    const deltas = events
+      .filter((event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text")
+      .map((event) => event.payload.delta);
+    assert.deepEqual(deltas, ["hello", " world"]);
     const assistantStarted = events.find(
       (event) => event.type === "item.started" && event.payload.itemType === "assistant_message",
     );
-    const assistantDelta = events.find(
+    const assistantDeltas = events.filter(
       (event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text",
     );
     assert.ok(assistantStarted?.itemId);
-    assert.equal(assistantDelta?.itemId, assistantStarted.itemId);
+    assert.equal(assistantDeltas.every((event) => event.itemId === assistantStarted.itemId), true);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
+it.effect("PiAdapter maps source-backed bash tool fixtures", () =>
+  Effect.gen(function* () {
+    const adapter = yield* makePiAdapter(makeSettings(makeFixturePi("pi-bash-turn.jsonl")));
+    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 14)).pipe(Effect.forkChild);
+    const threadId = ThreadId.make("pi-thread-bash-fixture");
+
+    yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+    yield* adapter.sendTurn({ threadId, input: "run bash" });
+
+    const events = [...(yield* Fiber.join(eventsFiber))];
     const toolStarted = events.find(
       (event) => event.type === "item.started" && event.payload.itemType === "command_execution",
     );
@@ -131,8 +150,31 @@ it.effect("PiAdapter attaches message and tool deltas to stable item ids", () =>
       (event) => event.type === "item.completed" && event.payload.itemType === "command_execution",
     );
     assert.ok(toolStarted?.itemId);
+    assert.equal(toolDelta?.payload.delta, "ok");
     assert.equal(toolDelta?.itemId, toolStarted.itemId);
     assert.equal(toolCompleted?.itemId, toolStarted.itemId);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("PiAdapter maps source-backed Titan tool fixtures", () =>
+  Effect.gen(function* () {
+    const adapter = yield* makePiAdapter(makeSettings(makeFixturePi("pi-titan-turn.jsonl")));
+    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 14)).pipe(Effect.forkChild);
+    const threadId = ThreadId.make("pi-thread-titan-fixture");
+
+    yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+    yield* adapter.sendTurn({ threadId, input: "query titan" });
+
+    const events = [...(yield* Fiber.join(eventsFiber))];
+    const titanStarted = events.find(
+      (event) => event.type === "item.started" && event.payload.itemType === "mcp_tool_call",
+    );
+    const titanDelta = events.find(
+      (event) => event.type === "content.delta" && event.payload.streamKind === "command_output",
+    );
+    assert.ok(titanStarted?.itemId);
+    assert.equal(titanDelta?.payload.delta, "found 2 memories");
+    assert.equal(titanDelta?.itemId, titanStarted.itemId);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

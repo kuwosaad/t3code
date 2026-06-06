@@ -35,15 +35,16 @@ Make Pi available inside T3 Code as a provider, while keeping Pi as the runtime 
 
 ### PR 3 — Real streaming + tool rendering
 
-- [ ] Capture real Pi text turn JSONL fixture
-- [ ] Capture real Pi bash/tool turn JSONL fixture
-- [ ] Capture real Pi Titan memory turn JSONL fixture
-- [ ] Confirm `message_update` text extraction against real Pi events
-- [ ] Render bash tools as command execution cards
-- [ ] Render file edits as file change cards
-- [ ] Render Titan calls as MCP/tool cards
-- [ ] Render subagent calls as collaboration agent cards
-- [ ] Add fixture-based mapping tests
+- [x] Add source-backed Pi text turn JSONL fixture
+- [x] Add source-backed Pi bash/tool turn JSONL fixture
+- [x] Add source-backed Pi Titan memory turn JSONL fixture
+- [x] Confirm `message_update` text extraction against Pi `assistantMessageEvent.delta`
+- [x] Render bash tools as command execution cards
+- [x] Render Titan calls as MCP/tool cards
+- [x] Add fixture-based mapping tests
+- [ ] Capture live Pi JSONL fixtures from a real model run
+- [ ] Render file edits as file change cards with fixture coverage
+- [ ] Render subagent calls as collaboration agent cards with fixture coverage
 
 ### PR 4 — Approvals, inputs, skills, commands
 
