@@ -72,10 +72,10 @@ Make Pi available inside T3 Code as a provider, while keeping Pi as the runtime 
 
 - [ ] T3 starts when `pi` is not installed
 - [ ] Pi appears as unavailable when binary is missing
-- [ ] Pi appears in provider picker when installed
-- [ ] Pi models populate
-- [ ] Plain text turn streams correctly
-- [ ] Bash/tool call renders correctly
+- [x] Pi appears in provider picker when installed
+- [x] Pi models populate
+- [x] Plain text turn streams correctly
+- [x] Bash/tool call renders correctly
 - [ ] Titan memory call is visible
 - [ ] Skill requiring user input works
 - [ ] Approval prompt works

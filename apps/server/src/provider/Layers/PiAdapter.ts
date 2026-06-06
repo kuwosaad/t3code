@@ -111,6 +111,14 @@ function textFromUnknown(value: unknown): string {
   return textFromRecord(value as Record<string, unknown>);
 }
 
+function messageRole(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const message = (value as Record<string, unknown>).message;
+  if (!message || typeof message !== "object") return undefined;
+  const role = (message as Record<string, unknown>).role;
+  return typeof role === "string" ? role : undefined;
+}
+
 function toolNameFromEvent(event: PiRpcEvent): string {
   const record = event as Record<string, unknown>;
   for (const key of ["toolName", "tool", "name"] as const) {
@@ -332,17 +340,25 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
       }
 
       if (event.method === "notify") {
-        yield* emit({
-          ...(yield* buildEventBase({ threadId, raw: event })),
-          type:
-            event.notifyType === "error"
-              ? ("runtime.error" as const)
-              : ("runtime.warning" as const),
-          payload: {
-            message: event.message,
-            ...(event.notifyType ? { detail: { notifyType: event.notifyType } } : {}),
-          },
-        });
+        if (event.notifyType === "error") {
+          yield* emit({
+            ...(yield* buildEventBase({ threadId, raw: event })),
+            type: "runtime.error" as const,
+            payload: {
+              message: event.message,
+              detail: { notifyType: event.notifyType },
+            },
+          });
+        } else if (event.notifyType === "warning") {
+          yield* emit({
+            ...(yield* buildEventBase({ threadId, raw: event })),
+            type: "runtime.warning" as const,
+            payload: {
+              message: event.message,
+              detail: { notifyType: event.notifyType },
+            },
+          });
+        }
         return;
       }
 
@@ -417,6 +433,7 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
           break;
 
         case "message_start": {
+          if (messageRole(event) !== "assistant") break;
           const itemId = RuntimeItemId.make(`pi-msg-${(yield* randomUUIDv4).slice(0, 8)}`);
           context.activeAssistantItemId = itemId;
           yield* emit({
