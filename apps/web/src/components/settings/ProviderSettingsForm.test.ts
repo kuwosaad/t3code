@@ -21,6 +21,20 @@ describe("ProviderSettingsForm helpers", () => {
     ]);
   });
 
+  it("derives Pi provider config fields from the client definition schema", () => {
+    const pi = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("pi")];
+
+    expect(pi).toBeDefined();
+    expect(deriveProviderSettingsFields(pi!).map((field) => field.key)).toEqual([
+      "binaryPath",
+      "provider",
+      "model",
+      "sessionDir",
+      "configDir",
+      "launchArgs",
+    ]);
+  });
+
   it("sources labels and descriptions from schema annotations", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();

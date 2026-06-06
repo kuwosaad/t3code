@@ -26,6 +26,9 @@ const RuntimeEventRawSource = Schema.Union([
   Schema.Literal("claude.sdk.permission"),
   Schema.Literal("codex.sdk.thread-event"),
   Schema.Literal("opencode.sdk.event"),
+  Schema.Literal("pi.rpc.event"),
+  Schema.Literal("pi.rpc.response"),
+  Schema.Literal("pi.rpc.extension_ui_request"),
   Schema.Literal("acp.jsonrpc"),
   Schema.TemplateLiteral(["acp.", Schema.String, ".extension"]),
 ]);
