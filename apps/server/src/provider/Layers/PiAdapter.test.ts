@@ -100,7 +100,7 @@ function makeExtensionRequestPi(request: Record<string, unknown>): string {
         return;
       }
       if (command.type === "extension_ui_response") {
-        process.stdout.write(JSON.stringify({ type: "extension_ui_request", id: "notify-response", method: "notify", message: JSON.stringify(command), notifyType: "info" }) + "\\n");
+        process.stdout.write(JSON.stringify({ type: "extension_ui_request", id: "notify-response", method: "notify", message: JSON.stringify(command), notifyType: "warning" }) + "\\n");
       }
     });
   `);
@@ -162,6 +162,39 @@ it.effect("PiAdapter finalizes the turn when prompt returns success false", () =
     const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
     assert.equal(session?.status, "error");
     assert.equal(session?.lastError, "No API key found");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("PiAdapter ignores successful Pi notify events", () =>
+  Effect.gen(function* () {
+    const adapter = yield* makePiAdapter(
+      makeSettings(
+        makeExtensionRequestPi({
+          type: "extension_ui_request",
+          id: "notify-success",
+          method: "notify",
+          message: "Titan memory ready",
+          notifyType: "success",
+        }),
+      ),
+    );
+    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 4)).pipe(
+      Effect.forkChild,
+    );
+    const threadId = ThreadId.make("pi-thread-notify-success");
+
+    yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+    yield* adapter.sendTurn({ threadId, input: "hello" });
+
+    const events = [...(yield* Fiber.join(eventsFiber))];
+    assert.equal(
+      events.some((event) => event.type === "runtime.warning"),
+      false,
+    );
+    assert.equal(
+      events.some((event) => event.type === "runtime.error"),
+      false,
+    );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -364,8 +397,12 @@ it.effect(
         (event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text",
       );
       const completed = events.find((event) => event.type === "turn.completed");
+      const assistantStarts = events.filter(
+        (event) => event.type === "item.started" && event.payload.itemType === "assistant_message",
+      );
       assert.equal(delta?.payload.delta, "OK");
       assert.equal(completed?.payload.state, "completed");
+      assert.equal(assistantStarts.length, 1);
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
