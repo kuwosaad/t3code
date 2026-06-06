@@ -132,6 +132,8 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
     // Legacy `providers` struct is still hydrated with its per-driver defaults
     // so existing call sites keep working through the migration.
     expect(decoded.providers.codex.enabled).toBe(true);
+    expect(decoded.providers.pi.enabled).toBe(true);
+    expect(decoded.providers.pi.binaryPath).toBe("pi");
   });
 
   it("decodes a multi-instance map mixing first-party and fork drivers", () => {
@@ -260,6 +262,11 @@ describe("ServerSettingsPatch string normalization", () => {
           homePath: "  ~/.codex  ",
           launchArgs: "  --strict-config --enable foo  ",
         },
+        pi: {
+          binaryPath: "  /opt/homebrew/bin/pi  ",
+          provider: "  anthropic  ",
+          model: "  sonnet:high  ",
+        },
       },
       providerInstances: {
         codex_personal: {
@@ -276,6 +283,9 @@ describe("ServerSettingsPatch string normalization", () => {
     expect(patch.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
     expect(patch.providers?.codex?.homePath).toBe("~/.codex");
     expect(patch.providers?.codex?.launchArgs).toBe("--strict-config --enable foo");
+    expect(patch.providers?.pi?.binaryPath).toBe("/opt/homebrew/bin/pi");
+    expect(patch.providers?.pi?.provider).toBe("anthropic");
+    expect(patch.providers?.pi?.model).toBe("sonnet:high");
     expect(patch.providerInstances?.[ProviderInstanceId.make("codex_personal")]?.driver).toBe(
       "codex",
     );
