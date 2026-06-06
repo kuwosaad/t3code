@@ -42,7 +42,7 @@ Make Pi available inside T3 Code as a provider, while keeping Pi as the runtime 
 - [x] Render bash tools as command execution cards
 - [x] Render Titan calls as MCP/tool cards
 - [x] Add fixture-based mapping tests
-- [ ] Capture live Pi JSONL fixtures from a real model run
+- [x] Capture live Pi JSONL fixtures from a real model run
 - [x] Render file edits as file change cards with fixture coverage
 - [x] Render subagent calls as collaboration agent cards with fixture coverage
 

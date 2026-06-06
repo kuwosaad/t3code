@@ -54,6 +54,35 @@ function makeFixturePi(fixtureName: string): string {
   `);
 }
 
+function makeAckFirstFixturePi(fixtureName: string): string {
+  const lines = readFileSync(
+    join(process.cwd(), "src/provider/pi/__fixtures__", fixtureName),
+    "utf8",
+  )
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length > 0);
+  return makeFakePi(`
+    import readline from "node:readline";
+    const fixtureLines = ${JSON.stringify(lines)};
+    const rl = readline.createInterface({ input: process.stdin });
+    rl.on("line", (line) => {
+      const command = JSON.parse(line);
+      if (command.type === "get_state") {
+        process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: { sessionId: "s1", isStreaming: false } }) + "\\n");
+        return;
+      }
+      if (command.type === "prompt") {
+        process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: {} }) + "\\n");
+        setTimeout(() => {
+          for (const fixtureLine of fixtureLines) {
+            process.stdout.write(fixtureLine + "\\n");
+          }
+        }, 10);
+      }
+    });
+  `);
+}
+
 function makeExtensionRequestPi(request: Record<string, unknown>): string {
   return makeFakePi(`
     import readline from "node:readline";
@@ -312,6 +341,32 @@ it.effect("PiAdapter maps source-backed text turn fixtures", () =>
       true,
     );
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "PiAdapter maps live-captured text turns when Pi acknowledges the prompt before streaming",
+  () =>
+    Effect.gen(function* () {
+      const adapter = yield* makePiAdapter(
+        makeSettings(makeAckFirstFixturePi("pi-live-text-turn.jsonl")),
+      );
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 12)).pipe(
+        Effect.forkChild,
+      );
+      const threadId = ThreadId.make("pi-thread-live-text-fixture");
+
+      yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+      const result = yield* adapter.sendTurn({ threadId, input: "hello" });
+      assert.equal(result.turnId.length > 0, true);
+
+      const events = [...(yield* Fiber.join(eventsFiber))];
+      const delta = events.find(
+        (event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+      );
+      const completed = events.find((event) => event.type === "turn.completed");
+      assert.equal(delta?.payload.delta, "OK");
+      assert.equal(completed?.payload.state, "completed");
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("PiAdapter maps source-backed bash tool fixtures", () =>
