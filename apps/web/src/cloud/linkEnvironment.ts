@@ -16,7 +16,6 @@ import {
   RelayEnvironmentConnectScope,
   type RelayClientDeviceRecord,
   type RelayEnvironmentLinkResponse,
-  RelayProtectedError,
   type RelayClientEnvironmentRecord,
   type RelayProtectedError as RelayProtectedErrorType,
   type RelayManagedEndpointProviderKind,
@@ -26,6 +25,7 @@ import {
   fetchRemoteEnvironmentDescriptor,
   makeEnvironmentHttpApiClient,
   ManagedRelayClient,
+  type ManagedRelayClientError,
   ManagedRelayDpopSigner,
   type WsRpcClient,
 } from "@t3tools/client-runtime";
@@ -64,6 +64,7 @@ function relayUrl(): string | null {
 export class CloudEnvironmentLinkError extends Data.TaggedError("CloudEnvironmentLinkError")<{
   readonly message: string;
   readonly cause?: unknown;
+  readonly traceId?: string;
 }> {}
 
 const relayClientRpcError = (message: string) => (cause: unknown) =>
@@ -112,7 +113,6 @@ function ensureRelayClientAvailable(
   });
 }
 
-const isRelayProtectedError = Schema.is(RelayProtectedError);
 const isEnvironmentCloudApiError = Schema.is(
   Schema.Union([
     EnvironmentHttpBadRequestError,
@@ -155,29 +155,20 @@ function relayProtectedErrorMessage(error: RelayProtectedErrorType): string {
     case "RelayAgentActivityPublishProofInvalidError":
       return `Relay rejected the agent activity publish proof (${error.reason}).`;
     case "RelayInternalError":
-      return `Relay encountered an internal error (${error.reason}, trace ${error.traceId}).`;
+      return `Relay encountered an internal error (${error.reason}).`;
   }
 }
 
 function decodedRelayClientError(message: string) {
-  return (cause: unknown) => {
-    const relayError = findRelayProtectedError(cause);
+  return (cause: ManagedRelayClientError) => {
+    const relayError = cause.relayError;
     const detail = relayError ? relayProtectedErrorMessage(relayError) : null;
     return new CloudEnvironmentLinkError({
       message: detail ? `${message}: ${detail}` : message,
       cause,
+      ...(cause.traceId ? { traceId: cause.traceId } : {}),
     });
   };
-}
-
-function findRelayProtectedError(cause: unknown): RelayProtectedErrorType | null {
-  if (isRelayProtectedError(cause)) {
-    return cause;
-  }
-  if (typeof cause !== "object" || cause === null) {
-    return null;
-  }
-  return "cause" in cause ? findRelayProtectedError(cause.cause) : null;
 }
 
 function findEnvironmentCloudApiError(cause: unknown): { readonly message: string } | null {

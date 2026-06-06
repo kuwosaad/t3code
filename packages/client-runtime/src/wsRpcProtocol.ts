@@ -1,4 +1,5 @@
 import { WsRpcGroup } from "@t3tools/contracts";
+import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -38,7 +39,7 @@ export interface WsProtocolLifecycleHandlers {
     readonly stream: boolean;
   }) => void;
   readonly onRequestInterrupt?: (info: { readonly id: string; readonly tag?: string }) => void;
-  readonly onError?: (message: string) => void;
+  readonly onError?: (message: string, cause?: unknown) => void;
   readonly onClose?: (
     details: { readonly code: number; readonly reason: string },
     context: { readonly intentional: boolean },
@@ -68,6 +69,10 @@ type RpcClientFactory = typeof makeWsRpcProtocolClient;
 export type WsRpcProtocolClient =
   RpcClientFactory extends Effect.Effect<infer Client, any, any> ? Client : never;
 export type WsRpcProtocolSocketUrlProvider = string | (() => Promise<string>);
+
+class WsRpcSocketUrlProviderError extends Data.TaggedError("WsRpcSocketUrlProviderError")<{
+  readonly cause: unknown;
+}> {}
 
 function formatSocketErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
@@ -175,12 +180,12 @@ function resolveLifecycleHandlers(
       telemetryLifecycle?.onHeartbeatTimeout?.();
       handlers?.onHeartbeatTimeout?.();
     },
-    onError: (message) => {
+    onError: (message, cause) => {
       if (!isActive()) {
         return;
       }
-      telemetryLifecycle?.onError?.(message);
-      handlers?.onError?.(message);
+      telemetryLifecycle?.onError?.(message, cause);
+      handlers?.onError?.(message, cause);
     },
     onClose: (details, context) => {
       if (!isActive()) {
@@ -202,11 +207,14 @@ export function createWsRpcProtocolLayer(
   const requestTelemetry = options?.requestTelemetry;
   const resolvedUrl =
     typeof url === "function"
-      ? Effect.promise(() => url()).pipe(
+      ? Effect.tryPromise({
+          try: () => url(),
+          catch: (cause) => new WsRpcSocketUrlProviderError({ cause }),
+        }).pipe(
           Effect.map((rawUrl) => resolveWsRpcSocketUrl(rawUrl)),
           Effect.tapError((error) =>
             Effect.sync(() => {
-              lifecycle.onError(formatSocketErrorMessage(error));
+              lifecycle.onError(formatSocketErrorMessage(error.cause), error.cause);
             }),
           ),
           Effect.orDie,

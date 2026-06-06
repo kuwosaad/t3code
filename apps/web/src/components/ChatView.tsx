@@ -205,7 +205,7 @@ const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnsw
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  readonly connectionState: "connecting" | "disconnected" | "error";
+  readonly connectionState: "connecting" | "reconnecting" | "disconnected" | "error";
 };
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
@@ -1112,6 +1112,7 @@ export default function ChatView(props: ChatViewProps) {
       label: activeEnvironmentUnavailableLabel,
       connectionState:
         activeSavedEnvironmentConnectionState === "connecting" ||
+        activeSavedEnvironmentConnectionState === "reconnecting" ||
         activeSavedEnvironmentConnectionState === "error"
           ? activeSavedEnvironmentConnectionState
           : "disconnected",
@@ -1395,7 +1396,9 @@ export default function ChatView(props: ChatViewProps) {
             {activeEnvironmentUnavailableState.label} is{" "}
             {activeEnvironmentUnavailableState.connectionState === "connecting"
               ? "connecting"
-              : "disconnected"}
+              : activeEnvironmentUnavailableState.connectionState === "reconnecting"
+                ? "reconnecting"
+                : "disconnected"}
           </>
         ),
         description: "Reconnect this environment before sending messages or running actions.",
@@ -1405,6 +1408,7 @@ export default function ChatView(props: ChatViewProps) {
               size="xs"
               disabled={
                 activeEnvironmentUnavailableState.connectionState === "connecting" ||
+                activeEnvironmentUnavailableState.connectionState === "reconnecting" ||
                 reconnectingEnvironmentId === activeEnvironmentUnavailableState.environmentId
               }
               onClick={() =>
@@ -1415,6 +1419,7 @@ export default function ChatView(props: ChatViewProps) {
               }
             >
               {activeEnvironmentUnavailableState.connectionState === "connecting" ||
+              activeEnvironmentUnavailableState.connectionState === "reconnecting" ||
               reconnectingEnvironmentId === activeEnvironmentUnavailableState.environmentId
                 ? "Reconnecting..."
                 : "Reconnect"}

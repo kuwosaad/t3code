@@ -11,11 +11,18 @@ import Animated, {
 
 import type { RemoteClientConnectionState } from "../../lib/connection";
 
-function statusDotTone(state: RemoteClientConnectionState): {
+export type ConnectionStatusDotState = RemoteClientConnectionState | "available";
+
+function statusDotTone(state: ConnectionStatusDotState): {
   readonly dotColor: string;
   readonly haloColor: string;
 } {
   switch (state) {
+    case "available":
+      return {
+        dotColor: "#9ca3af",
+        haloColor: "rgba(156,163,175,0.42)",
+      };
     case "ready":
       return {
         dotColor: "#34d399",
@@ -63,7 +70,7 @@ function usePulseAnimation(pulse: boolean) {
 }
 
 export function ConnectionStatusDot(props: {
-  readonly state: RemoteClientConnectionState;
+  readonly state: ConnectionStatusDotState;
   readonly pulse: boolean;
   readonly size?: number;
 }) {

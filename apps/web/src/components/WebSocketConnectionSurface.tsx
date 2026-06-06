@@ -13,7 +13,6 @@ import {
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { getPrimaryEnvironmentConnection } from "../environments/runtime";
 
-const FORCED_WS_RECONNECT_DEBOUNCE_MS = 5_000;
 type WsAutoReconnectTrigger = "focus" | "online";
 
 const connectionTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -133,22 +132,9 @@ export function shouldAutoReconnect(
   );
 }
 
-export function shouldRestartStalledReconnect(
-  status: WsConnectionStatus,
-  expectedNextRetryAt: string,
-): boolean {
-  return (
-    status.reconnectPhase === "waiting" &&
-    status.nextRetryAt === expectedNextRetryAt &&
-    status.online &&
-    status.hasConnected
-  );
-}
-
 export function WebSocketConnectionCoordinator() {
   const status = useWsConnectionStatus();
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const lastForcedReconnectAtRef = useRef(0);
   const toastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
   const toastResetTimerRef = useRef<number | null>(null);
   const previousUiStateRef = useRef<WsConnectionUiState>(getWsConnectionUiState(status));
@@ -159,7 +145,6 @@ export function WebSocketConnectionCoordinator() {
       window.clearTimeout(toastResetTimerRef.current);
       toastResetTimerRef.current = null;
     }
-    lastForcedReconnectAtRef.current = Date.now();
     void getPrimaryEnvironmentConnection()
       .reconnect()
       .catch((error) => {
@@ -194,10 +179,6 @@ export function WebSocketConnectionCoordinator() {
     if (!shouldAutoReconnect(currentStatus, trigger)) {
       return;
     }
-    if (Date.now() - lastForcedReconnectAtRef.current < FORCED_WS_RECONNECT_DEBOUNCE_MS) {
-      return;
-    }
-
     runReconnect(false);
   });
 
@@ -234,38 +215,6 @@ export function WebSocketConnectionCoordinator() {
       window.clearInterval(intervalId);
     };
   }, [status.nextRetryAt, status.reconnectPhase]);
-
-  useEffect(() => {
-    if (
-      status.reconnectPhase !== "waiting" ||
-      status.nextRetryAt === null ||
-      !status.online ||
-      !status.hasConnected
-    ) {
-      return;
-    }
-
-    const nextRetryAt = status.nextRetryAt;
-    const timeoutMs = Math.max(0, new Date(nextRetryAt).getTime() - Date.now()) + 1_500;
-    const timeoutId = window.setTimeout(() => {
-      const currentStatus = getWsConnectionStatus();
-      if (!shouldRestartStalledReconnect(currentStatus, nextRetryAt)) {
-        return;
-      }
-
-      runReconnect(false);
-    }, timeoutMs);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [
-    status.hasConnected,
-    status.nextRetryAt,
-    status.online,
-    status.reconnectAttemptCount,
-    status.reconnectPhase,
-  ]);
 
   useEffect(() => {
     const uiState = getWsConnectionUiState(status);

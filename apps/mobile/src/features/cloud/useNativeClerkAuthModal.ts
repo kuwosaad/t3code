@@ -91,9 +91,9 @@ async function syncNativeSession(sessionId: string): Promise<void> {
 export function useNativeClerkAuthModal() {
   const presentingRef = useRef(false);
 
-  const presentAuth = useCallback(async (): Promise<void> => {
+  const presentAuth = useCallback(async (): Promise<boolean> => {
     if (presentingRef.current || !NativeClerk?.presentAuth) {
-      return;
+      return false;
     }
 
     presentingRef.current = true;
@@ -117,6 +117,7 @@ export function useNativeClerkAuthModal() {
       const sessionId = result?.sessionId ?? result?.session?.id ?? null;
       if (sessionId && !result?.cancelled) {
         await syncNativeSession(sessionId);
+        return true;
       }
     } catch (error) {
       if (__DEV__) {
@@ -125,6 +126,7 @@ export function useNativeClerkAuthModal() {
     } finally {
       presentingRef.current = false;
     }
+    return false;
   }, []);
 
   return {

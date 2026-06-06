@@ -360,6 +360,43 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     });
   });
 
+  it.effect("coalesces simultaneous sign-in and environment connection registrations", () => {
+    const fetchMock = vi.fn((request: RequestInfo | URL) => {
+      const url = request instanceof Request ? request.url : String(request);
+      return Promise.resolve(
+        Response.json(
+          url.endsWith("/v1/client/dpop-token")
+            ? {
+                access_token: "relay-dpop-token",
+                issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+                token_type: "DPoP",
+                expires_in: 300,
+                scope: "mobile:registration",
+              }
+            : { ok: true },
+        ),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    Constants.expoConfig!.extra = {
+      relay: {
+        url: "https://relay.example.test/",
+      },
+    };
+
+    vi.mocked(Notifications.getPermissionsAsync).mockClear();
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+    registerAgentAwarenessConnection(savedConnection());
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        waitForFetchCalls(vi.mocked(Notifications.getPermissionsAsync), 1),
+      );
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 0)));
+      expect(Notifications.getPermissionsAsync).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("only registers again when the authenticated identity changes", () => {
     expect(shouldRegisterAgentAwarenessDeviceForProvider(null, "user-a")).toBe(true);
     expect(shouldRegisterAgentAwarenessDeviceForProvider("user-a", "user-a")).toBe(false);

@@ -17,6 +17,7 @@ import {
   fetchRemoteEnvironmentDescriptor,
   fetchRemoteDpopSessionState,
   fetchRemoteSessionState,
+  findErrorTraceId,
   type ManagedRelayDpopProofInput,
   ManagedRelayDpopSigner,
   resolveRemoteDpopWebSocketConnectionUrl,
@@ -129,6 +130,7 @@ const pendingSavedEnvironmentConnections = new Map<
   EnvironmentId,
   PendingSavedEnvironmentConnection
 >();
+const pendingSavedEnvironmentReconnects = new Map<EnvironmentId, Promise<void>>();
 const environmentConnectionListeners = new Set<() => void>();
 const providerInvalidationListeners = new Set<() => void>();
 const threadDetailSubscriptions = new Map<string, ThreadDetailSubscriptionEntry>();
@@ -143,8 +145,7 @@ const terminalMetadataSubscriptions = new Map<EnvironmentId, () => void>();
 
 let activeService: EnvironmentServiceState | null = null;
 let needsProviderInvalidation = false;
-let lastBrowserHiddenAt: number | null = null;
-let lastBrowserResumeReconnectAt = Number.NEGATIVE_INFINITY;
+let browserResumePending = false;
 
 // TODO(CLIENT-RUNTIME MIGRATION - DO NOT EXPAND THIS WEB-ONLY COPY):
 // This file still owns web's legacy thread-detail subscription cache. Mobile
@@ -162,7 +163,6 @@ let lastBrowserResumeReconnectAt = Number.NEGATIVE_INFINITY;
 // - Capacity eviction only targets idle cached subscriptions.
 const THREAD_DETAIL_SUBSCRIPTION_IDLE_EVICTION_MS = 15 * 60 * 1000;
 const MAX_CACHED_THREAD_DETAIL_SUBSCRIPTIONS = 32;
-const BROWSER_RESUME_RECONNECT_COOLDOWN_MS = 2_000;
 const INITIAL_SERVER_CONFIG_SNAPSHOT_WAIT_MS = 150;
 const NOOP = () => undefined;
 const SSH_HTTP_STATUS_RE = /^\[ssh_http:(\d+)\]\s/u;
@@ -631,6 +631,7 @@ function emitProviderInvalidation() {
 function getRuntimeErrorFields(error: unknown) {
   return {
     lastError: error instanceof Error ? error.message : String(error),
+    lastErrorTraceId: findErrorTraceId(error),
     lastErrorAt: new Date().toISOString(),
   } as const;
 }
@@ -868,6 +869,32 @@ function setRuntimeConnecting(environmentId: EnvironmentId) {
   useSavedEnvironmentRuntimeStore.getState().patch(environmentId, {
     connectionState: "connecting",
     lastError: null,
+    lastErrorTraceId: null,
+    lastErrorAt: null,
+  });
+}
+
+function setRuntimeAttempting(environmentId: EnvironmentId) {
+  const current = useSavedEnvironmentRuntimeStore.getState().byId?.[environmentId];
+  if (current?.connectionState === "connecting") {
+    return;
+  }
+  useSavedEnvironmentRuntimeStore.getState().patch(environmentId, {
+    connectionState:
+      current?.connectionState === "disconnected" && current.connectedAt === null
+        ? "connecting"
+        : "reconnecting",
+    lastError: null,
+    lastErrorTraceId: null,
+    lastErrorAt: null,
+  });
+}
+
+function setRuntimeReconnecting(environmentId: EnvironmentId) {
+  useSavedEnvironmentRuntimeStore.getState().patch(environmentId, {
+    connectionState: "reconnecting",
+    lastError: null,
+    lastErrorTraceId: null,
     lastErrorAt: null,
   });
 }
@@ -880,18 +907,22 @@ function setRuntimeConnected(environmentId: EnvironmentId) {
     connectedAt,
     disconnectedAt: null,
     lastError: null,
+    lastErrorTraceId: null,
     lastErrorAt: null,
   });
   useSavedEnvironmentRegistryStore.getState().markConnected(environmentId, connectedAt);
 }
 
 function setRuntimeDisconnected(environmentId: EnvironmentId, reason?: string | null) {
+  const current = useSavedEnvironmentRuntimeStore.getState().byId?.[environmentId];
+  const normalizedReason = reason?.trim() || null;
+  const lastError = normalizedReason ?? current?.lastError ?? null;
   useSavedEnvironmentRuntimeStore.getState().patch(environmentId, {
-    connectionState: "disconnected",
+    connectionState: lastError ? "error" : "disconnected",
     disconnectedAt: isoNow(),
-    ...(reason && reason.trim().length > 0
+    ...(lastError
       ? {
-          lastError: reason,
+          lastError,
           lastErrorAt: isoNow(),
         }
       : {}),
@@ -1253,26 +1284,36 @@ function createSavedEnvironmentClient(
             useSavedEnvironmentRuntimeStore.getState().byId[environmentId]?.serverConfig,
           )?.hint ?? null,
         onAttempt: () => {
-          setRuntimeConnecting(environmentId);
+          setRuntimeAttempting(environmentId);
         },
-        onOpen: () => {
-          setRuntimeConnected(environmentId);
-        },
-        onError: (message: string) => {
+        onError: (message: string, cause?: unknown) => {
           const mismatch = resolveServerConfigVersionMismatch(
             useSavedEnvironmentRuntimeStore.getState().byId[environmentId]?.serverConfig,
           );
           useSavedEnvironmentRuntimeStore.getState().patch(environmentId, {
             connectionState: "error",
             lastError: appendVersionMismatchHint(message, mismatch),
+            lastErrorTraceId: findErrorTraceId(cause),
             lastErrorAt: isoNow(),
           });
         },
-        onClose: (details: { readonly code: number; readonly reason: string }) => {
+        onClose: (
+          details: { readonly code: number; readonly reason: string },
+          context: { readonly intentional: boolean },
+        ) => {
+          if (context.intentional) {
+            return;
+          }
+          const closeReason =
+            details.reason.trim().length > 0
+              ? details.reason
+              : details.code === 1000
+                ? null
+                : `Remote connection closed (${details.code}).`;
           setRuntimeDisconnected(
             environmentId,
             appendVersionMismatchHint(
-              details.reason,
+              closeReason,
               resolveServerConfigVersionMismatch(
                 useSavedEnvironmentRuntimeStore.getState().byId[environmentId]?.serverConfig,
               ),
@@ -1537,6 +1578,12 @@ async function ensureSavedEnvironmentConnection(
             descriptor: payload.environment,
           });
         },
+        onReady: () => {
+          setRuntimeConnected(activeRecord.environmentId);
+        },
+        onReconnectStart: () => {
+          setRuntimeReconnecting(activeRecord.environmentId);
+        },
         ...createEnvironmentConnectionHandlers(),
       });
 
@@ -1659,16 +1706,10 @@ function stopActiveService() {
 }
 
 function reconnectEnvironmentConnectionsAfterBrowserResume(reason: string): void {
-  const now = Date.now();
-  if (now - lastBrowserResumeReconnectAt < BROWSER_RESUME_RECONNECT_COOLDOWN_MS) {
-    return;
-  }
-
   for (const connection of environmentConnections.values()) {
     if (connection.client.isHeartbeatFresh()) {
       continue;
     }
-    lastBrowserResumeReconnectAt = now;
     void connection.reconnect().catch((error) => {
       console.warn("Environment reconnect after browser resume failed", {
         environmentId: connection.environmentId,
@@ -1686,18 +1727,21 @@ function subscribeBrowserResumeReconnects(): () => void {
 
   const handleVisibilityChange = () => {
     if (document.visibilityState === "hidden") {
-      lastBrowserHiddenAt = Date.now();
+      browserResumePending = true;
       return;
     }
-    if (document.visibilityState === "visible" && lastBrowserHiddenAt !== null) {
-      lastBrowserHiddenAt = null;
+    if (document.visibilityState === "visible" && browserResumePending) {
+      browserResumePending = false;
       reconnectEnvironmentConnectionsAfterBrowserResume("visibilitychange");
     }
   };
 
   const handlePageShow = (event: PageTransitionEvent) => {
-    if (event.persisted || lastBrowserHiddenAt !== null) {
-      lastBrowserHiddenAt = null;
+    if (event.persisted) {
+      browserResumePending = false;
+      for (const connection of environmentConnections.values()) {
+        connection.client.markConnectionUncertain();
+      }
       reconnectEnvironmentConnectionsAfterBrowserResume("pageshow");
     }
   };
@@ -1766,7 +1810,7 @@ export async function disconnectSavedEnvironment(environmentId: EnvironmentId): 
   }
 }
 
-export async function reconnectSavedEnvironment(environmentId: EnvironmentId): Promise<void> {
+async function runSavedEnvironmentReconnect(environmentId: EnvironmentId): Promise<void> {
   const record = getSavedEnvironmentRecord(environmentId);
   if (!record) {
     throw new Error("Saved environment not found.");
@@ -1787,7 +1831,6 @@ export async function reconnectSavedEnvironment(environmentId: EnvironmentId): P
     }
   }
 
-  setRuntimeConnecting(environmentId);
   try {
     if (record.desktopSsh) {
       await prepareSavedEnvironmentRecordForConnection(record);
@@ -1816,6 +1859,29 @@ export async function reconnectSavedEnvironment(environmentId: EnvironmentId): P
     setRuntimeError(environmentId, error);
     throw error;
   }
+}
+
+export function reconnectSavedEnvironment(environmentId: EnvironmentId): Promise<void> {
+  const pending = pendingSavedEnvironmentReconnects.get(environmentId);
+  if (pending) {
+    return pending;
+  }
+
+  const operation = runSavedEnvironmentReconnect(environmentId);
+  pendingSavedEnvironmentReconnects.set(environmentId, operation);
+  void operation.then(
+    () => {
+      if (pendingSavedEnvironmentReconnects.get(environmentId) === operation) {
+        pendingSavedEnvironmentReconnects.delete(environmentId);
+      }
+    },
+    () => {
+      if (pendingSavedEnvironmentReconnects.get(environmentId) === operation) {
+        pendingSavedEnvironmentReconnects.delete(environmentId);
+      }
+    },
+  );
+  return operation;
 }
 
 export async function removeSavedEnvironment(environmentId: EnvironmentId): Promise<void> {
@@ -2036,10 +2102,10 @@ export function startEnvironmentConnectionService(queryClient: QueryClient): () 
 
 export async function resetEnvironmentServiceForTests(): Promise<void> {
   stopActiveService();
-  lastBrowserHiddenAt = null;
-  lastBrowserResumeReconnectAt = Number.NEGATIVE_INFINITY;
+  browserResumePending = false;
   lastAppliedProjectionVersionByEnvironment.clear();
   pendingSavedEnvironmentConnections.clear();
+  pendingSavedEnvironmentReconnects.clear();
   savedEnvironmentConnectionAttempts.clear();
   for (const key of Array.from(threadDetailSubscriptions.keys())) {
     disposeThreadDetailSubscriptionByKey(key);

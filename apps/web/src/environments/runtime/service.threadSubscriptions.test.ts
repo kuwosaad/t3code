@@ -81,6 +81,7 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
     dispose: async () => undefined,
     reconnect: async () => undefined,
     isHeartbeatFresh: () => false,
+    markConnectionUncertain: () => undefined,
     cloud: {
       getRelayClientStatus: vi.fn(),
       installRelayClient: vi.fn(),
@@ -597,6 +598,64 @@ describe("retainThreadDetailSubscription", () => {
     visibilityState = "visible";
     documentTarget.dispatchEvent(new Event("visibilitychange"));
     expect(mockConnectionReconnects[0]).toHaveBeenCalledTimes(1);
+
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("invalidates heartbeat evidence and reconnects after a bfcache restore", async () => {
+    const documentTarget = new EventTarget();
+    const windowTarget = new EventTarget();
+    vi.stubGlobal("document", {
+      addEventListener: documentTarget.addEventListener.bind(documentTarget),
+      removeEventListener: documentTarget.removeEventListener.bind(documentTarget),
+      visibilityState: "visible",
+    });
+    vi.stubGlobal("window", {
+      addEventListener: windowTarget.addEventListener.bind(windowTarget),
+      removeEventListener: windowTarget.removeEventListener.bind(windowTarget),
+    });
+    let heartbeatFresh = true;
+    const markConnectionUncertain = vi.fn(() => {
+      heartbeatFresh = false;
+    });
+    mockCreateEnvironmentConnection.mockImplementation((input) => {
+      const reconnect = vi.fn(async () => undefined);
+      mockConnectionReconnects.push(reconnect);
+      queueMicrotask(() => {
+        input.onConfigSnapshot?.({
+          environment: {
+            environmentId: input.knownEnvironment.environmentId,
+            label: input.knownEnvironment.label,
+            platform: { os: "darwin", arch: "arm64" },
+            serverVersion: "0.0.0-test",
+            capabilities: { repositoryIdentity: true },
+          },
+        });
+      });
+      return {
+        kind: input.kind,
+        environmentId: input.knownEnvironment.environmentId,
+        knownEnvironment: input.knownEnvironment,
+        client: {
+          ...input.client,
+          isHeartbeatFresh: vi.fn(() => heartbeatFresh),
+          markConnectionUncertain,
+        },
+        ensureBootstrapped: vi.fn(async () => undefined),
+        reconnect,
+        dispose: vi.fn(async () => undefined),
+      };
+    });
+
+    const { resetEnvironmentServiceForTests, startEnvironmentConnectionService } =
+      await import("./service");
+    const stop = startEnvironmentConnectionService(new QueryClient());
+
+    windowTarget.dispatchEvent(Object.assign(new Event("pageshow"), { persisted: true }));
+
+    expect(markConnectionUncertain).toHaveBeenCalledOnce();
+    expect(mockConnectionReconnects[0]).toHaveBeenCalledOnce();
 
     stop();
     await resetEnvironmentServiceForTests();

@@ -387,15 +387,20 @@ function SettingsRow(props: {
       style={{ opacity: props.disabled ? 0.45 : 1 }}
     >
       <SymbolView name={props.icon} size={22} tintColor={icon} type="monochrome" weight="regular" />
-      <Text className="flex-1 text-[17px] text-foreground">{props.label}</Text>
-      {props.value ? (
-        <Text
-          className="max-w-[180px] text-right text-[16px] text-foreground-muted"
-          numberOfLines={1}
-        >
-          {props.value}
-        </Text>
-      ) : null}
+      <Text className="shrink-0 text-[17px] text-foreground" numberOfLines={1}>
+        {props.label}
+      </Text>
+      <View className="min-w-0 flex-1 items-end">
+        {props.value ? (
+          <Text
+            className="max-w-[180px] text-right text-[16px] text-foreground-muted"
+            ellipsizeMode="middle"
+            numberOfLines={1}
+          >
+            {props.value}
+          </Text>
+        ) : null}
+      </View>
       <SymbolView
         name="chevron.right"
         size={16}

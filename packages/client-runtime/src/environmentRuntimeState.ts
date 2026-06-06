@@ -11,6 +11,7 @@ export type EnvironmentConnectionState =
 export interface EnvironmentRuntimeState {
   readonly connectionState: EnvironmentConnectionState;
   readonly connectionError: string | null;
+  readonly connectionErrorTraceId: string | null;
   readonly serverConfig: T3ServerConfig | null;
 }
 
@@ -21,6 +22,7 @@ export interface EnvironmentRuntimeTarget {
 export const EMPTY_ENVIRONMENT_RUNTIME_STATE = Object.freeze<EnvironmentRuntimeState>({
   connectionState: "idle",
   connectionError: null,
+  connectionErrorTraceId: null,
   serverConfig: null,
 });
 

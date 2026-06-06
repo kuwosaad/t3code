@@ -68,6 +68,7 @@ export interface WsRpcClient {
   readonly dispose: () => Promise<void>;
   readonly reconnect: () => Promise<void>;
   readonly isHeartbeatFresh: () => boolean;
+  readonly markConnectionUncertain: () => void;
   readonly terminal: {
     readonly open: RpcUnaryMethod<typeof WS_METHODS.terminalOpen>;
     readonly attach: RpcInputStreamMethod<typeof WS_METHODS.terminalAttach>;
@@ -182,6 +183,7 @@ export function createWsRpcClient(
   return {
     dispose: () => transport.dispose(),
     isHeartbeatFresh: () => transport.isHeartbeatFresh(),
+    markConnectionUncertain: () => transport.markConnectionUncertain(),
     reconnect: async () => {
       options?.beforeReconnect?.();
       await transport.reconnect();

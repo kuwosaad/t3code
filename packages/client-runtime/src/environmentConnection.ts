@@ -40,6 +40,8 @@ export interface EnvironmentConnectionInput extends OrchestrationHandlers {
   readonly onConfigSnapshot?: (config: ServerConfig) => void;
   readonly onWelcome?: (payload: ServerLifecycleWelcomePayload) => void;
   readonly onShellResubscribe?: (environmentId: EnvironmentId) => void;
+  readonly onReady?: (environmentId: EnvironmentId) => void;
+  readonly onReconnectStart?: (environmentId: EnvironmentId) => void;
 }
 
 export interface EnvironmentConnectionAttempt {
@@ -85,7 +87,9 @@ export class EnvironmentConnectionDisposedError extends Error {
 function createBootstrapGate() {
   let resolve: (() => void) | null = null;
   let reject: ((error: unknown) => void) | null = null;
+  let settled = false;
   const makePromise = () => {
+    settled = false;
     const nextPromise = new Promise<void>((nextResolve, nextReject) => {
       resolve = nextResolve;
       reject = nextReject;
@@ -98,16 +102,27 @@ function createBootstrapGate() {
   return {
     wait: () => promise,
     resolve: () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       resolve?.();
       resolve = null;
       reject = null;
     },
     reject: (error: unknown) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       reject?.(error);
       resolve = null;
       reject = null;
     },
     reset: () => {
+      if (!settled) {
+        return;
+      }
       promise = makePromise();
     },
   };
@@ -125,6 +140,7 @@ export function createEnvironmentConnection(
   }
 
   let disposed = false;
+  let pendingReconnect: Promise<void> | null = null;
   const bootstrapGate = createBootstrapGate();
   const shouldObserveLifecycle = input.kind === "saved" || input.onWelcome !== undefined;
   const shouldObserveConfig = input.kind === "saved" || input.onConfigSnapshot !== undefined;
@@ -173,6 +189,7 @@ export function createEnvironmentConnection(
 
       if (item.kind === "snapshot") {
         input.syncShellSnapshot(item.snapshot, environmentId);
+        input.onReady?.(environmentId);
         bootstrapGate.resolve();
         return;
       }
@@ -221,20 +238,41 @@ export function createEnvironmentConnection(
       disposed
         ? Promise.reject(new EnvironmentConnectionDisposedError(environmentId))
         : bootstrapGate.wait(),
-    reconnect: async () => {
+    reconnect: () => {
       if (disposed) {
-        throw new EnvironmentConnectionDisposedError(environmentId);
+        return Promise.reject(new EnvironmentConnectionDisposedError(environmentId));
       }
 
-      bootstrapGate.reset();
-      try {
-        await input.client.reconnect();
-        await input.refreshMetadata?.();
-        await bootstrapGate.wait();
-      } catch (error) {
-        bootstrapGate.reject(error);
-        throw error;
+      if (pendingReconnect) {
+        return pendingReconnect;
       }
+
+      const operation = (async () => {
+        input.onReconnectStart?.(environmentId);
+        bootstrapGate.reset();
+        try {
+          await input.client.reconnect();
+          await input.refreshMetadata?.();
+          await bootstrapGate.wait();
+        } catch (error) {
+          bootstrapGate.reject(error);
+          throw error;
+        }
+      })();
+      pendingReconnect = operation;
+      void operation.then(
+        () => {
+          if (pendingReconnect === operation) {
+            pendingReconnect = null;
+          }
+        },
+        () => {
+          if (pendingReconnect === operation) {
+            pendingReconnect = null;
+          }
+        },
+      );
+      return operation;
     },
     dispose: async () => {
       cleanup();

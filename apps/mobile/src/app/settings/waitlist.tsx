@@ -1,4 +1,5 @@
-import { Redirect, Stack } from "expo-router";
+import { Redirect, Stack, useRouter } from "expo-router";
+import { useCallback } from "react";
 import { ScrollView } from "react-native";
 
 import { CloudWaitlistEnrollment } from "../../features/cloud/CloudWaitlistEnrollment";
@@ -15,6 +16,14 @@ export default function SettingsWaitlistRouteScreen() {
 
 function ConfiguredSettingsWaitlistRouteScreen() {
   const { presentAuth } = useNativeClerkAuthModal();
+  const router = useRouter();
+
+  const handleSignIn = useCallback(async () => {
+    const signedIn = await presentAuth();
+    if (signedIn) {
+      router.replace("/settings");
+    }
+  }, [presentAuth, router]);
 
   return (
     <>
@@ -31,7 +40,7 @@ function ConfiguredSettingsWaitlistRouteScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <CloudWaitlistEnrollment onSignIn={() => void presentAuth()} />
+        <CloudWaitlistEnrollment onSignIn={() => void handleSignIn()} />
       </ScrollView>
     </>
   );

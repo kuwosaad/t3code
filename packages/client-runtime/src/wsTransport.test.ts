@@ -180,6 +180,20 @@ describe("WsTransport", () => {
     await transport.dispose();
   });
 
+  it("preserves async websocket url provider errors for lifecycle handlers", async () => {
+    const cause = { message: "Relay rejected the websocket ticket.", traceId: "trace-ws-ticket" };
+    const onError = vi.fn();
+    const transport = createTransport(() => Promise.reject(cause), { onError });
+
+    await transport.request(() => Effect.void).catch(() => undefined);
+
+    await waitFor(() => {
+      expect(onError).toHaveBeenCalledWith(String(cause), cause);
+    });
+
+    await transport.dispose();
+  });
+
   it("invokes optional lifecycle handlers when the socket opens and closes", async () => {
     const onOpen = vi.fn();
     const onClose = vi.fn();
@@ -265,6 +279,31 @@ describe("WsTransport", () => {
     await transport.reconnect();
 
     expect(transport.isHeartbeatFresh()).toBe(false);
+
+    await transport.dispose();
+  });
+
+  it("marks heartbeat freshness unknown without replacing the session", async () => {
+    vi.spyOn(performance, "now").mockReturnValue(1_000);
+    const transport = createTransport("ws://localhost:3020");
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const socket = getSocket();
+    socket.open();
+    socket.serverMessage(JSON.stringify({ _tag: "Pong" }));
+
+    await waitFor(() => {
+      expect(transport.isHeartbeatFresh()).toBe(true);
+    });
+
+    transport.markConnectionUncertain();
+
+    expect(transport.isHeartbeatFresh()).toBe(false);
+    expect(sockets).toHaveLength(1);
+    expect(socket.readyState).toBe(MockWebSocket.OPEN);
 
     await transport.dispose();
   });
@@ -358,6 +397,25 @@ describe("WsTransport", () => {
     await expect(requestPromise).resolves.toEqual({
       keybindings: [],
       issues: [],
+    });
+
+    await transport.dispose();
+  });
+
+  it("coalesces concurrent reconnect requests into one session replacement", async () => {
+    const transport = createTransport("ws://localhost:3020");
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    getSocket().open();
+    const first = transport.reconnect();
+    const second = transport.reconnect();
+
+    await Promise.all([first, second]);
+    await waitFor(() => {
+      expect(sockets).toHaveLength(2);
     });
 
     await transport.dispose();

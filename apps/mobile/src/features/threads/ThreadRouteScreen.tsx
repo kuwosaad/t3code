@@ -18,6 +18,7 @@ import { connectionTone } from "../connection/connectionTone";
 
 import { useRemoteCatalog } from "../../state/use-remote-catalog";
 import {
+  useRemoteConnections,
   useRemoteConnectionStatus,
   useRemoteEnvironmentState,
 } from "../../state/use-remote-environment-registry";
@@ -58,10 +59,9 @@ function OpeningThreadLoadingScreen() {
 }
 
 export function ThreadRouteScreen() {
-  const { isLoadingSavedConnection, environmentStateById, pendingConnectionError } =
-    useRemoteEnvironmentState();
-  const { connectionState, connectionError: aggregateConnectionError } =
-    useRemoteConnectionStatus();
+  const { isLoadingSavedConnection, environmentStateById } = useRemoteEnvironmentState();
+  const { connectionState } = useRemoteConnectionStatus();
+  const { onReconnectEnvironment } = useRemoteConnections();
   const { projects, threads } = useRemoteCatalog();
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
@@ -86,9 +86,9 @@ export function ThreadRouteScreen() {
   const routeEnvironmentRuntime = environmentId
     ? (environmentStateById[environmentId] ?? null)
     : null;
-  const routeConnectionState = routeEnvironmentRuntime?.connectionState ?? connectionState;
-  const routeConnectionError =
-    pendingConnectionError ?? routeEnvironmentRuntime?.connectionError ?? aggregateConnectionError;
+  const routeConnectionState =
+    routeEnvironmentRuntime?.connectionState ?? (environmentId ? "idle" : connectionState);
+  const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
 
   /* ─── Native header theming ──────────────────────────────────────── */
   const isDark = useColorScheme() === "dark";
@@ -114,6 +114,12 @@ export function ThreadRouteScreen() {
     [knownTerminalSessions, selectedThreadProject?.workspaceRoot],
   );
   const selectedThreadDetailWorktreePath = selectedThreadDetail?.worktreePath ?? null;
+  const handleReconnectEnvironment = useCallback(() => {
+    if (!environmentId) {
+      return;
+    }
+    onReconnectEnvironment(environmentId);
+  }, [environmentId, onReconnectEnvironment]);
 
   /* ─── Git action progress (for overlay banner) ──────────────────── */
   const gitActionProgressTarget = useMemo(
@@ -354,6 +360,7 @@ export function ThreadRouteScreen() {
           selectedThread={selectedThreadDetail}
           screenTone={connectionTone(routeConnectionState)}
           connectionError={routeConnectionError}
+          environmentLabel={selectedEnvironmentConnection?.environmentLabel ?? null}
           httpBaseUrl={selectedEnvironmentConnection?.httpBaseUrl ?? null}
           bearerToken={selectedEnvironmentConnection?.bearerToken ?? null}
           selectedThreadFeed={composer.selectedThreadFeed}
@@ -380,6 +387,7 @@ export function ThreadRouteScreen() {
           serverConfig={serverConfig}
           onStopThread={commands.onStopThread}
           onSendMessage={composer.onSendMessage}
+          onReconnectEnvironment={handleReconnectEnvironment}
           onUpdateThreadModelSelection={commands.onUpdateThreadModelSelection}
           onUpdateThreadRuntimeMode={commands.onUpdateThreadRuntimeMode}
           onUpdateThreadInteractionMode={commands.onUpdateThreadInteractionMode}

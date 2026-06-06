@@ -26,12 +26,14 @@ describe("createEnvironmentRuntimeManager", () => {
     manager.setState(TARGET, {
       connectionState: "ready",
       connectionError: null,
+      connectionErrorTraceId: null,
       serverConfig: null,
     });
 
     expect(manager.getSnapshot(TARGET)).toEqual({
       connectionState: "ready",
       connectionError: null,
+      connectionErrorTraceId: null,
       serverConfig: null,
     });
   });
@@ -50,6 +52,7 @@ describe("createEnvironmentRuntimeManager", () => {
     expect(manager.getSnapshot(TARGET)).toEqual({
       connectionState: "disconnected",
       connectionError: "Socket closed.",
+      connectionErrorTraceId: null,
       serverConfig: null,
     });
   });
@@ -62,6 +65,7 @@ describe("createEnvironmentRuntimeManager", () => {
     manager.setState(TARGET, {
       connectionState: "ready",
       connectionError: null,
+      connectionErrorTraceId: null,
       serverConfig: null,
     });
     manager.invalidate(TARGET);
@@ -69,6 +73,7 @@ describe("createEnvironmentRuntimeManager", () => {
     expect(manager.getSnapshot(TARGET)).toEqual({
       connectionState: "idle",
       connectionError: null,
+      connectionErrorTraceId: null,
       serverConfig: null,
     });
   });

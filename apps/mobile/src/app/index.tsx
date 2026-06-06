@@ -102,6 +102,7 @@ export default function HomeRouteScreen() {
         savedConnectionsById={savedConnectionsById}
         searchQuery={searchQuery}
         onAddConnection={() => router.push("/connections/new")}
+        onOpenEnvironments={() => router.push("/settings/environments")}
         onSelectThread={(thread) => {
           router.push(buildThreadRoutePath(thread));
         }}

@@ -312,7 +312,12 @@ export async function removeSavedEnvironmentBearerToken(
   await ensureLocalApi().persistence.removeSavedEnvironmentSecret(environmentId);
 }
 
-export type SavedEnvironmentConnectionState = "connecting" | "connected" | "disconnected" | "error";
+export type SavedEnvironmentConnectionState =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "disconnected"
+  | "error";
 
 export type SavedEnvironmentAuthState = "authenticated" | "requires-auth" | "unknown";
 
@@ -320,6 +325,7 @@ export interface SavedEnvironmentRuntimeState {
   readonly connectionState: SavedEnvironmentConnectionState;
   readonly authState: SavedEnvironmentAuthState;
   readonly lastError: string | null;
+  readonly lastErrorTraceId?: string | null;
   readonly lastErrorAt: string | null;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope> | null;
   readonly descriptor: ExecutionEnvironmentDescriptor | null;
@@ -343,6 +349,7 @@ const DEFAULT_SAVED_ENVIRONMENT_RUNTIME_STATE: SavedEnvironmentRuntimeState = Ob
   connectionState: "disconnected",
   authState: "unknown",
   lastError: null,
+  lastErrorTraceId: null,
   lastErrorAt: null,
   scopes: null,
   descriptor: null,

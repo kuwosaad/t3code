@@ -47,6 +47,9 @@ export function ConnectionEnvironmentRow(props: {
   const primaryFg = useThemeColor("--color-primary-foreground");
   const dangerFg = useThemeColor("--color-danger-foreground");
   const statusLabel = connectionStatusLabel(props.environment);
+  const visualConnectionState = props.environment.connectionError
+    ? "disconnected"
+    : props.environment.connectionState;
 
   const handleSave = useCallback(() => {
     props.onUpdate(props.environment.environmentId, {
@@ -63,10 +66,11 @@ export function ConnectionEnvironmentRow(props: {
         onPress={props.onToggle}
       >
         <ConnectionStatusDot
-          state={props.environment.connectionState}
+          state={visualConnectionState}
           pulse={
-            props.environment.connectionState === "connecting" ||
-            props.environment.connectionState === "reconnecting"
+            !props.environment.connectionError &&
+            (props.environment.connectionState === "connecting" ||
+              props.environment.connectionState === "reconnecting")
           }
           size={8}
         />

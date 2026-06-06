@@ -42,6 +42,7 @@ export interface ThreadDetailScreenProps {
   readonly selectedThread: OrchestrationThread;
   readonly screenTone: StatusTone;
   readonly connectionError: string | null;
+  readonly environmentLabel: string | null;
   readonly httpBaseUrl: string | null;
   readonly bearerToken: string | null;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
@@ -69,6 +70,7 @@ export interface ThreadDetailScreenProps {
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => Promise<void>;
   readonly onSendMessage: () => void;
+  readonly onReconnectEnvironment: () => void;
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => Promise<void>;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => Promise<void>;
   readonly onUpdateThreadInteractionMode: (
@@ -302,6 +304,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 draftAttachments={props.draftAttachments}
                 placeholder="Ask the repo agent, or run a command…"
                 connectionState={props.connectionStateLabel}
+                connectionError={props.connectionError}
+                environmentLabel={props.environmentLabel}
                 selectedThread={props.selectedThread}
                 serverConfig={props.serverConfig}
                 queueCount={props.selectedThreadQueueCount}
@@ -315,6 +319,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 onRemoveDraftImage={props.onRemoveDraftImage}
                 onStopThread={props.onStopThread}
                 onSendMessage={props.onSendMessage}
+                onReconnectEnvironment={props.onReconnectEnvironment}
                 onUpdateModelSelection={props.onUpdateThreadModelSelection}
                 onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                 onUpdateInteractionMode={props.onUpdateThreadInteractionMode}

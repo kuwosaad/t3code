@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentAuthInvalidError, EnvironmentId } from "@t3tools/contracts";
 import {
   createManagedRelaySession,
   ManagedRelayDpopSigner,
@@ -9,22 +9,39 @@ import * as Effect from "effect/Effect";
 import { beforeEach, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => {
+  let onReconnectStart: ((environmentId: EnvironmentId) => void) | undefined;
+  let currentEnvironmentId: EnvironmentId | undefined;
   const environmentConnection = {
     ensureBootstrapped: vi.fn(() => Promise.resolve()),
     dispose: vi.fn(() => Promise.resolve()),
   };
   const sessionConnection = {
     dispose: vi.fn(() => Promise.resolve()),
-    reconnect: vi.fn(() => Promise.resolve()),
+    reconnect: vi.fn(() => {
+      if (currentEnvironmentId) {
+        onReconnectStart?.(currentEnvironmentId);
+      }
+      return Promise.resolve();
+    }),
   };
   const sessionClient = {
     isHeartbeatFresh: vi.fn(() => false),
+    markConnectionUncertain: vi.fn(),
   };
   return {
     environmentConnection,
     sessionConnection,
     sessionClient,
-    createEnvironmentConnection: vi.fn(() => environmentConnection),
+    createEnvironmentConnection: vi.fn(
+      (input: {
+        readonly knownEnvironment: { readonly environmentId: EnvironmentId };
+        readonly onReconnectStart?: (environmentId: EnvironmentId) => void;
+      }) => {
+        currentEnvironmentId = input.knownEnvironment.environmentId;
+        onReconnectStart = input.onReconnectStart;
+        return environmentConnection;
+      },
+    ),
     createKnownEnvironment: vi.fn((input: unknown) => input),
     createWsRpcClient: vi.fn(() => ({ rpc: true })),
     wsTransportConstructor: vi.fn(),
@@ -165,7 +182,9 @@ vi.mock("./use-terminal-session", () => ({
 import {
   connectSavedEnvironment,
   disconnectEnvironment,
+  markEnvironmentConnectionsUncertain,
   reconnectEnvironmentConnectionsAfterAppResume,
+  reconnectSavedEnvironment,
 } from "./use-remote-environment-registry";
 import { appAtomRegistry } from "./atom-registry";
 
@@ -184,11 +203,9 @@ const connection = {
 describe("mobile remote environment registry effects", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.createEnvironmentConnection.mockReturnValue(mocks.environmentConnection);
     mocks.environmentConnection.ensureBootstrapped.mockResolvedValue(undefined);
     mocks.environmentConnection.dispose.mockResolvedValue(undefined);
     mocks.sessionConnection.dispose.mockResolvedValue(undefined);
-    mocks.sessionConnection.reconnect.mockResolvedValue(undefined);
     mocks.sessionClient.isHeartbeatFresh.mockReturnValue(false);
     mocks.removeEnvironmentSession.mockReturnValue(null);
     mocks.getEnvironmentSession.mockReturnValue(null);
@@ -336,6 +353,155 @@ describe("mobile remote environment registry effects", () => {
     }),
   );
 
+  it.effect("reuses managed credentials across transport sessions while they remain valid", () =>
+    Effect.gen(function* () {
+      const savedDpopConnection = {
+        ...connection,
+        bearerToken: null,
+        authenticationMethod: "dpop",
+        dpopAccessToken: "initial-environment-dpop-token",
+        relayManaged: true,
+      } as const;
+      setManagedRelaySession(
+        appAtomRegistry,
+        createManagedRelaySession({
+          accountId: "account-1",
+          readClerkToken: () => Promise.resolve("fresh-clerk-token"),
+        }),
+      );
+      mocks.mobileRunPromise.mockImplementation((effect?: unknown) =>
+        Effect.runPromise(
+          (effect as Effect.Effect<string, unknown, ManagedRelayDpopSigner>).pipe(
+            Effect.provideService(
+              ManagedRelayDpopSigner,
+              ManagedRelayDpopSigner.of({
+                thumbprint: Effect.succeed("mobile-key-thumbprint"),
+                createProof: mocks.createDpopProof,
+              }),
+            ),
+          ),
+        ),
+      );
+
+      yield* connectSavedEnvironment(savedDpopConnection);
+      const openSocket = mocks.wsTransportConstructor.mock.calls[0]?.[0] as
+        | (() => Promise<string>)
+        | undefined;
+      expect(openSocket).toBeDefined();
+
+      yield* Effect.promise(() => openSocket!());
+      expect(mocks.refreshCloudEnvironmentConnection).not.toHaveBeenCalled();
+      expect(mocks.createDpopProof).toHaveBeenLastCalledWith(
+        expect.objectContaining({ accessToken: "initial-environment-dpop-token" }),
+      );
+
+      yield* Effect.promise(() => openSocket!());
+      expect(mocks.refreshCloudEnvironmentConnection).not.toHaveBeenCalled();
+      expect(mocks.createDpopProof).toHaveBeenLastCalledWith(
+        expect.objectContaining({ accessToken: "initial-environment-dpop-token" }),
+      );
+    }),
+  );
+
+  it.effect("refreshes managed credentials after the relay rejects the current token", () =>
+    Effect.gen(function* () {
+      const savedDpopConnection = {
+        ...connection,
+        bearerToken: null,
+        authenticationMethod: "dpop",
+        dpopAccessToken: "expired-environment-dpop-token",
+        relayManaged: true,
+      } as const;
+      const refreshedConnection = {
+        ...savedDpopConnection,
+        dpopAccessToken: "refreshed-environment-dpop-token",
+      } as const;
+      setManagedRelaySession(
+        appAtomRegistry,
+        createManagedRelaySession({
+          accountId: "account-1",
+          readClerkToken: () => Promise.resolve("fresh-clerk-token"),
+        }),
+      );
+      mocks.resolveRemoteDpopWebSocketConnectionUrl
+        .mockReturnValueOnce(
+          Effect.fail(
+            new EnvironmentAuthInvalidError({
+              code: "auth_invalid",
+              reason: "invalid_credential",
+              traceId: "trace-expired",
+            }),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed("wss://desktop.example/ws?wsTicket=refreshed-token"));
+      mocks.refreshCloudEnvironmentConnection.mockReturnValue(Effect.succeed(refreshedConnection));
+      mocks.mobileRunPromise.mockImplementation((effect?: unknown) =>
+        Effect.runPromise(
+          (effect as Effect.Effect<string, unknown, ManagedRelayDpopSigner>).pipe(
+            Effect.provideService(
+              ManagedRelayDpopSigner,
+              ManagedRelayDpopSigner.of({
+                thumbprint: Effect.succeed("mobile-key-thumbprint"),
+                createProof: mocks.createDpopProof,
+              }),
+            ),
+          ),
+        ),
+      );
+
+      yield* connectSavedEnvironment(savedDpopConnection);
+      const openSocket = mocks.wsTransportConstructor.mock.calls[0]?.[0] as
+        | (() => Promise<string>)
+        | undefined;
+      expect(openSocket).toBeDefined();
+
+      yield* Effect.promise(() => openSocket!());
+
+      expect(mocks.refreshCloudEnvironmentConnection).toHaveBeenCalledWith({
+        clerkToken: "fresh-clerk-token",
+        connection: savedDpopConnection,
+      });
+      expect(mocks.createDpopProof).toHaveBeenLastCalledWith(
+        expect.objectContaining({ accessToken: "refreshed-environment-dpop-token" }),
+      );
+    }),
+  );
+
+  it.effect("shows reconnecting when an automatic retry starts after a settled error", () =>
+    Effect.gen(function* () {
+      yield* connectSavedEnvironment(connection);
+      const lifecycle = mocks.wsTransportConstructor.mock.calls[0]?.[1] as
+        | { readonly onAttempt?: () => void }
+        | undefined;
+      expect(lifecycle?.onAttempt).toBeDefined();
+      vi.clearAllMocks();
+
+      lifecycle!.onAttempt!();
+
+      const updater = mocks.environmentRuntimePatch.mock.calls[0]?.[1] as
+        | ((current: {
+            readonly connectionState: "disconnected";
+            readonly connectionError: string | null;
+            readonly serverConfig: null;
+          }) => {
+            readonly connectionState: string;
+            readonly connectionError: string | null;
+          })
+        | undefined;
+      expect(updater).toBeDefined();
+      expect(
+        updater!({
+          connectionState: "disconnected",
+          connectionError: "Socket closed.",
+          serverConfig: null,
+        }),
+      ).toMatchObject({
+        connectionState: "reconnecting",
+        connectionError: null,
+      });
+    }),
+  );
+
   it.effect("fails interactive connects when the managed endpoint bootstrap fails", () =>
     Effect.gen(function* () {
       mocks.environmentConnection.ensureBootstrapped.mockRejectedValueOnce(
@@ -410,6 +576,87 @@ describe("mobile remote environment registry effects", () => {
     }),
   );
 
+  it.effect("does not reconnect a healthy saved environment after app resume", () =>
+    Effect.gen(function* () {
+      yield* connectSavedEnvironment(connection);
+      vi.clearAllMocks();
+      mocks.sessionClient.isHeartbeatFresh.mockReturnValue(true);
+      mocks.getEnvironmentSession.mockReturnValue({
+        client: mocks.sessionClient,
+        connection: mocks.sessionConnection,
+      } as never);
+
+      reconnectEnvironmentConnectionsAfterAppResume("test");
+
+      expect(mocks.sessionConnection.reconnect).not.toHaveBeenCalled();
+      expect(mocks.shellSnapshotMarkPending).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("marks saved environment freshness unknown when the app backgrounds", () =>
+    Effect.gen(function* () {
+      yield* connectSavedEnvironment(connection);
+      vi.clearAllMocks();
+      mocks.getEnvironmentSession.mockReturnValue({
+        client: mocks.sessionClient,
+        connection: mocks.sessionConnection,
+      } as never);
+
+      markEnvironmentConnectionsUncertain();
+
+      expect(mocks.sessionClient.markConnectionUncertain).toHaveBeenCalledTimes(1);
+      expect(mocks.sessionConnection.reconnect).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("reuses the existing environment session for a manual reconnect", () =>
+    Effect.gen(function* () {
+      yield* connectSavedEnvironment(connection);
+      vi.clearAllMocks();
+      mocks.getEnvironmentSession.mockReturnValue({
+        client: mocks.sessionClient,
+        connection: mocks.sessionConnection,
+      } as never);
+
+      yield* Effect.promise(() => reconnectSavedEnvironment(connection.environmentId));
+
+      expect(mocks.sessionConnection.reconnect).toHaveBeenCalledTimes(1);
+      expect(mocks.wsTransportConstructor).not.toHaveBeenCalled();
+      expect(mocks.createEnvironmentConnection).not.toHaveBeenCalled();
+      expect(mocks.shellSnapshotMarkPending).toHaveBeenCalledWith({
+        environmentId: connection.environmentId,
+      });
+    }),
+  );
+
+  it.effect("coalesces concurrent reconnect requests for one environment", () =>
+    Effect.gen(function* () {
+      yield* connectSavedEnvironment(connection);
+      vi.clearAllMocks();
+      let resolveReconnect: () => void = () => {
+        throw new Error("Reconnect promise was not initialized.");
+      };
+      mocks.sessionConnection.reconnect.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveReconnect = resolve;
+          }),
+      );
+      mocks.getEnvironmentSession.mockReturnValue({
+        client: mocks.sessionClient,
+        connection: mocks.sessionConnection,
+      } as never);
+
+      const first = reconnectSavedEnvironment(connection.environmentId);
+      const second = reconnectSavedEnvironment(connection.environmentId);
+
+      expect(second).toBe(first);
+      expect(mocks.sessionConnection.reconnect).toHaveBeenCalledTimes(1);
+      resolveReconnect();
+      yield* Effect.promise(() => first);
+    }),
+  );
+
   it.effect("disconnects and removes persisted managed endpoint state when requested", () =>
     Effect.gen(function* () {
       mocks.removeEnvironmentSession.mockReturnValue({
@@ -425,6 +672,18 @@ describe("mobile remote environment registry effects", () => {
       expect(mocks.clearSavedConnection).toHaveBeenCalledWith(connection.environmentId);
       expect(mocks.clearCachedShellSnapshot).toHaveBeenCalledWith(connection.environmentId);
       expect(mocks.clearCachedShellSnapshotMetadata).toHaveBeenCalledWith(connection.environmentId);
+    }),
+  );
+
+  it.effect("retains persisted environment state for a non-removal disconnect", () =>
+    Effect.gen(function* () {
+      yield* disconnectEnvironment(connection.environmentId, {
+        preserveShellSnapshot: true,
+      });
+
+      expect(mocks.clearSavedConnection).not.toHaveBeenCalled();
+      expect(mocks.clearCachedShellSnapshot).not.toHaveBeenCalled();
+      expect(mocks.clearCachedShellSnapshotMetadata).not.toHaveBeenCalled();
     }),
   );
 });

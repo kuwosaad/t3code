@@ -392,7 +392,7 @@ export interface ChatComposerProps {
   isPreparingWorktree: boolean;
   environmentUnavailable: {
     readonly label: string;
-    readonly connectionState: "connecting" | "disconnected" | "error";
+    readonly connectionState: "connecting" | "reconnecting" | "disconnected" | "error";
   } | null;
 
   // Pending approvals / inputs
@@ -2251,7 +2251,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           ? `${environmentUnavailable.label} is ${
                               environmentUnavailable.connectionState === "connecting"
                                 ? "connecting"
-                                : "disconnected"
+                                : environmentUnavailable.connectionState === "reconnecting"
+                                  ? "reconnecting"
+                                  : "disconnected"
                             }`
                           : phase === "disconnected"
                             ? "Ask for follow-up changes or attach images"

@@ -14,6 +14,7 @@ export interface ConnectedEnvironmentSummary {
   readonly isRelayManaged: boolean;
   readonly connectionState: EnvironmentConnectionState;
   readonly connectionError: string | null;
+  readonly connectionErrorTraceId: string | null;
 }
 
 export interface SelectedThreadRef {

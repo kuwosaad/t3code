@@ -23,6 +23,8 @@ import {
   type RelayPublicClientId,
   RelayRegisterDeviceEndpoint,
   RelayRegisterLiveActivityEndpoint,
+  RelayProtectedError,
+  type RelayProtectedError as RelayProtectedErrorType,
   RelayUnregisterDeviceEndpoint,
 } from "@t3tools/contracts/relay";
 import { encodeOAuthScope, oauthScopeSetEquals } from "@t3tools/shared/oauthScope";
@@ -34,7 +36,9 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import { HttpClientError } from "effect/unstable/http";
 import type { HttpMethod } from "effect/unstable/http/HttpMethod";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 
@@ -47,6 +51,11 @@ export interface ManagedRelayDpopProofInput {
 export class ManagedRelayDpopSignerError extends Data.TaggedError("ManagedRelayDpopSignerError")<{
   readonly cause: unknown;
 }> {}
+
+type RelayHttpRequestError =
+  | RelayProtectedErrorType
+  | HttpClientError.HttpClientError
+  | Schema.SchemaError;
 
 export interface ManagedRelayDpopSignerShape {
   readonly thumbprint: Effect.Effect<string, ManagedRelayDpopSignerError>;
@@ -62,7 +71,9 @@ export class ManagedRelayDpopSigner extends Context.Service<
 
 export class ManagedRelayClientError extends Data.TaggedError("ManagedRelayClientError")<{
   readonly message: string;
-  readonly cause?: unknown;
+  readonly cause?: RelayHttpRequestError | ManagedRelayDpopSignerError;
+  readonly relayError?: RelayProtectedErrorType;
+  readonly traceId?: string;
 }> {}
 
 export const MANAGED_RELAY_REQUEST_TIMEOUT_MS = 10_000;
@@ -137,8 +148,26 @@ export class ManagedRelayClient extends Context.Service<
   ManagedRelayClientShape
 >()("@t3tools/client-runtime/managedRelay/ManagedRelayClient") {}
 
-function relayClientError(message: string, cause?: unknown): ManagedRelayClientError {
-  return new ManagedRelayClientError({ message, ...(cause === undefined ? {} : { cause }) });
+const isRelayProtectedError = Schema.is(RelayProtectedError);
+
+function relayClientError(message: string): ManagedRelayClientError {
+  return new ManagedRelayClientError({ message });
+}
+
+function relayLocalError(
+  message: string,
+  cause: ManagedRelayDpopSignerError,
+): ManagedRelayClientError {
+  return new ManagedRelayClientError({ message, cause });
+}
+
+function relayRequestError(message: string) {
+  return (cause: RelayHttpRequestError): ManagedRelayClientError =>
+    new ManagedRelayClientError({
+      message,
+      cause,
+      ...(isRelayProtectedError(cause) ? { relayError: cause, traceId: cause.traceId } : {}),
+    });
 }
 
 function timeoutRelayRequest(message: string) {
@@ -270,7 +299,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 .createProof(dpopProofTargets.exchangeAccessToken())
                 .pipe(
                   Effect.mapError((cause) =>
-                    relayClientError("Could not create relay token DPoP proof.", cause),
+                    relayLocalError("Could not create relay token DPoP proof.", cause),
                   ),
                 );
               const response = yield* client.token
@@ -287,9 +316,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                   },
                 })
                 .pipe(
-                  Effect.mapError((cause) =>
-                    relayClientError("Could not exchange relay DPoP access token.", cause),
-                  ),
+                  Effect.mapError(relayRequestError("Could not exchange relay DPoP access token.")),
                   timeoutRelayRequest("Relay DPoP access token exchange timed out."),
                 );
               if (!oauthScopeSetEquals(response.scope, input.scopes)) {
@@ -318,7 +345,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
         Effect.gen(function* () {
           const thumbprint = yield* signer.thumbprint.pipe(
             Effect.mapError((cause) =>
-              relayClientError("Could not load relay DPoP proof key.", cause),
+              relayLocalError("Could not load relay DPoP proof key.", cause),
             ),
           );
           const token = yield* obtainAccessToken({
@@ -333,7 +360,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
             })
             .pipe(
               Effect.mapError((cause) =>
-                relayClientError("Could not create relay request DPoP proof.", cause),
+                relayLocalError("Could not create relay request DPoP proof.", cause),
               ),
             );
           return { accessToken: token.accessToken, proof, thumbprint };
@@ -353,9 +380,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
         listEnvironments: (input) =>
           client.client.listEnvironments({ headers: bearerHeaders(input.clerkToken) }).pipe(
             Effect.map((response) => response.environments),
-            Effect.mapError((cause) =>
-              relayClientError("Could not list relay-managed environments.", cause),
-            ),
+            Effect.mapError(relayRequestError("Could not list relay-managed environments.")),
             timeoutRelayRequest("Relay environment listing timed out."),
           ),
         listDevices: (input) =>
@@ -365,9 +390,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
             })
             .pipe(
               Effect.map((response) => response.devices),
-              Effect.mapError((cause) =>
-                relayClientError("Could not list relay client devices.", cause),
-              ),
+              Effect.mapError(relayRequestError("Could not list relay client devices.")),
               timeoutRelayRequest("Relay client device listing timed out."),
             ),
         createEnvironmentLinkChallenge: (input) =>
@@ -377,8 +400,8 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
               payload: input.payload,
             })
             .pipe(
-              Effect.mapError((cause) =>
-                relayClientError("Could not create relay environment link challenge.", cause),
+              Effect.mapError(
+                relayRequestError("Could not create relay environment link challenge."),
               ),
               timeoutRelayRequest("Relay environment link challenge timed out."),
             ),
@@ -389,9 +412,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
               payload: input.payload,
             })
             .pipe(
-              Effect.mapError((cause) =>
-                relayClientError("Could not link relay environment.", cause),
-              ),
+              Effect.mapError(relayRequestError("Could not link relay environment.")),
               timeoutRelayRequest("Relay environment linking timed out."),
             ),
         unlinkEnvironment: (input) =>
@@ -401,9 +422,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
               params: { environmentId: input.environmentId },
             })
             .pipe(
-              Effect.mapError((cause) =>
-                relayClientError("Could not unlink relay environment.", cause),
-              ),
+              Effect.mapError(relayRequestError("Could not unlink relay environment.")),
               timeoutRelayRequest("Relay environment unlinking timed out."),
             ),
         getEnvironmentStatus: (input) =>
@@ -419,9 +438,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 params: { environmentId: input.environmentId },
               })
               .pipe(
-                Effect.mapError((cause) =>
-                  relayClientError("Could not get relay environment status.", cause),
-                ),
+                Effect.mapError(relayRequestError("Could not get relay environment status.")),
                 timeoutRelayRequest("Relay environment status request timed out."),
               );
           }),
@@ -443,9 +460,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 payload,
               })
               .pipe(
-                Effect.mapError((cause) =>
-                  relayClientError("Could not connect relay environment.", cause),
-                ),
+                Effect.mapError(relayRequestError("Could not connect relay environment.")),
                 timeoutRelayRequest("Relay environment connection timed out."),
               );
           }),
@@ -461,9 +476,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 payload: input.payload,
               })
               .pipe(
-                Effect.mapError((cause) =>
-                  relayClientError("Could not register relay mobile device.", cause),
-                ),
+                Effect.mapError(relayRequestError("Could not register relay mobile device.")),
                 timeoutRelayRequest("Relay mobile device registration timed out."),
               );
           }),
@@ -479,9 +492,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 params: { deviceId: input.deviceId },
               })
               .pipe(
-                Effect.mapError((cause) =>
-                  relayClientError("Could not unregister relay mobile device.", cause),
-                ),
+                Effect.mapError(relayRequestError("Could not unregister relay mobile device.")),
                 timeoutRelayRequest("Relay mobile device unregistration timed out."),
               );
           }),
@@ -497,9 +508,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 payload: input.payload,
               })
               .pipe(
-                Effect.mapError((cause) =>
-                  relayClientError("Could not register relay live activity.", cause),
-                ),
+                Effect.mapError(relayRequestError("Could not register relay live activity.")),
                 timeoutRelayRequest("Relay Live Activity registration timed out."),
               );
           }),

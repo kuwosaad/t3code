@@ -4,15 +4,22 @@ import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
+import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, vi } from "vite-plus/test";
 
-import { ManagedRelayClient, type ManagedRelayClientShape } from "./managedRelay.ts";
+import {
+  ManagedRelayClient,
+  ManagedRelayClientError,
+  type ManagedRelayClientShape,
+} from "./managedRelay.ts";
 import {
   createManagedRelayQueryManager,
   createManagedRelaySession,
+  type ManagedRelayQueryEvent,
   managedRelaySessionAtom,
   readManagedRelaySnapshotState,
   setManagedRelaySession,
@@ -56,7 +63,10 @@ function resetRegistry() {
   registry = AtomRegistry.make();
 }
 
-function createManager(overrides?: Partial<ManagedRelayClientShape>) {
+function createManager(
+  overrides?: Partial<ManagedRelayClientShape>,
+  onQueryEvent?: (event: ManagedRelayQueryEvent) => void,
+) {
   const client = ManagedRelayClient.of({
     relayUrl: "https://relay.example.test",
     listEnvironments: () => Effect.succeed([environment]),
@@ -79,7 +89,10 @@ function createManager(overrides?: Partial<ManagedRelayClientShape>) {
     ...overrides,
   });
   const runtime = Atom.runtime(Layer.succeed(ManagedRelayClient, client));
-  return createManagedRelayQueryManager(runtime, { staleTimeMs: 60_000 });
+  return createManagedRelayQueryManager(runtime, {
+    staleTimeMs: 60_000,
+    ...(onQueryEvent ? { onQueryEvent } : {}),
+  });
 }
 
 function setSession() {
@@ -92,16 +105,110 @@ function setSession() {
   );
 }
 
+function clerkToken(expiresAtSeconds: number): string {
+  const encode = (value: unknown) =>
+    btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+  return `${encode({ alg: "none" })}.${encode({ exp: expiresAtSeconds })}.signature`;
+}
+
 describe("createManagedRelayQueryManager", () => {
   afterEach(resetRegistry);
 
-  it("waits for the current cloud session before reading its token", async () => {
-    const token = Effect.runPromise(waitForManagedRelayClerkToken(registry));
+  it.effect("waits for the current cloud session before reading its token", () =>
+    Effect.gen(function* () {
+      const tokenFiber = yield* waitForManagedRelayClerkToken(registry).pipe(Effect.forkChild);
 
-    setSession();
+      setSession();
 
-    await expect(token).resolves.toBe("clerk-token");
-    expect(registry.getNodes().get(managedRelaySessionAtom)?.listeners.size).toBe(0);
+      expect(yield* Fiber.join(tokenFiber)).toBe("clerk-token");
+      expect(registry.getNodes().get(managedRelaySessionAtom)?.listeners.size).toBe(0);
+    }),
+  );
+
+  it.effect("deduplicates concurrent Clerk token reads and reuses the token until JWT expiry", () =>
+    Effect.gen(function* () {
+      const token = clerkToken(4_102_444_800);
+      let resolveToken!: (value: string) => void;
+      const readClerkToken = vi.fn(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveToken = resolve;
+          }),
+      );
+      const session = createManagedRelaySession({
+        accountId: "account-1",
+        readClerkToken,
+      });
+
+      const readsFiber = yield* Effect.all([session.readClerkToken(), session.readClerkToken()], {
+        concurrency: "unbounded",
+      }).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      expect(readClerkToken).toHaveBeenCalledTimes(1);
+
+      resolveToken(token);
+      expect(yield* Fiber.join(readsFiber)).toEqual([token, token]);
+      expect(yield* session.readClerkToken()).toBe(token);
+      expect(readClerkToken).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it("shares one Clerk token read across concurrent relay list and status queries", async () => {
+    const secondEnvironment = {
+      ...environment,
+      environmentId: EnvironmentId.make("environment-2"),
+      label: "Second environment",
+      endpoint: {
+        ...environment.endpoint,
+        httpBaseUrl: "https://environment-2.example.test",
+        wsBaseUrl: "wss://environment-2.example.test",
+      },
+    } satisfies RelayClientEnvironmentRecord;
+    const token = clerkToken(4_102_444_800);
+    const readClerkToken = vi.fn(() => Promise.resolve(token));
+    const manager = createManager({
+      listEnvironments: () => Effect.succeed([environment, secondEnvironment]),
+      getEnvironmentStatus: ({ environmentId }) => {
+        const current =
+          environmentId === environment.environmentId ? environment : secondEnvironment;
+        return Effect.succeed({
+          environmentId: current.environmentId,
+          endpoint: current.endpoint,
+          status: "online" as const,
+          checkedAt: "2026-06-01T00:00:00.000Z",
+        });
+      },
+    });
+    setManagedRelaySession(
+      registry,
+      createManagedRelaySession({
+        accountId: "account-1",
+        readClerkToken,
+      }),
+    );
+
+    const environmentsAtom = manager.environmentsAtom("account-1");
+    const firstStatusAtom = manager.environmentStatusAtom({
+      accountId: "account-1",
+      environment,
+    });
+    const secondStatusAtom = manager.environmentStatusAtom({
+      accountId: "account-1",
+      environment: secondEnvironment,
+    });
+    registry.get(environmentsAtom);
+    registry.get(firstStatusAtom);
+    registry.get(secondStatusAtom);
+
+    await vi.waitFor(() => {
+      expect(readManagedRelaySnapshotState(registry.get(firstStatusAtom)).data?.status).toBe(
+        "online",
+      );
+      expect(readManagedRelaySnapshotState(registry.get(secondStatusAtom)).data?.status).toBe(
+        "online",
+      );
+    });
+    expect(readClerkToken).toHaveBeenCalledTimes(1);
   });
 
   it("keeps environment snapshots cached and refreshes them explicitly", async () => {
@@ -132,6 +239,36 @@ describe("createManagedRelayQueryManager", () => {
     });
   });
 
+  it("reports token and relay request timings for environment status queries", async () => {
+    const onQueryEvent = vi.fn();
+    const manager = createManager(undefined, onQueryEvent);
+    setSession();
+    const atom = manager.environmentStatusAtom({ accountId: "account-1", environment });
+
+    registry.get(atom);
+    await vi.waitFor(() => {
+      expect(readManagedRelaySnapshotState(registry.get(atom)).data?.status).toBe("online");
+    });
+
+    expect(onQueryEvent).toHaveBeenCalledWith({
+      operation: "environment-status",
+      stage: "clerk-token",
+      phase: "start",
+      accountId: "account-1",
+      environmentId: environment.environmentId,
+    });
+    expect(onQueryEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "environment-status",
+        stage: "relay-request",
+        phase: "success",
+        accountId: "account-1",
+        environmentId: environment.environmentId,
+        durationMs: expect.any(Number),
+      }),
+    );
+  });
+
   it("rejects status responses for a different environment", async () => {
     const mismatchedStatus = {
       environmentId: EnvironmentId.make("environment-2"),
@@ -150,6 +287,28 @@ describe("createManagedRelayQueryManager", () => {
       expect(readManagedRelaySnapshotState(registry.get(atom)).error).toBe(
         "Relay returned status for a different environment.",
       );
+    });
+  });
+
+  it("exposes relay trace IDs alongside snapshot errors", async () => {
+    const manager = createManager({
+      getEnvironmentStatus: () =>
+        Effect.fail(
+          new ManagedRelayClientError({
+            message: "Could not get relay environment status.",
+            traceId: "trace-status",
+          }),
+        ),
+    });
+    setSession();
+    const atom = manager.environmentStatusAtom({ accountId: "account-1", environment });
+
+    registry.get(atom);
+    await vi.waitFor(() => {
+      expect(readManagedRelaySnapshotState(registry.get(atom))).toMatchObject({
+        error: "Could not get relay environment status.",
+        errorTraceId: "trace-status",
+      });
     });
   });
 });

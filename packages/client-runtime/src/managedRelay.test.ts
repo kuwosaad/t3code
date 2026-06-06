@@ -136,6 +136,33 @@ describe("ManagedRelayClient", () => {
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), managedRelayTestLayer(fetchFn))));
   });
 
+  it.effect("preserves typed relay trace IDs on client errors", () => {
+    const fetchFn = (() =>
+      Promise.resolve(
+        Response.json(
+          {
+            _tag: "RelayAuthInvalidError",
+            code: "auth_invalid",
+            reason: "invalid_bearer",
+            traceId: "trace-managed-relay",
+          },
+          { status: 401 },
+        ),
+      )) satisfies typeof globalThis.fetch;
+
+    return Effect.gen(function* () {
+      const relayClient = yield* ManagedRelayClient;
+      const error = yield* relayClient
+        .listEnvironments({ clerkToken: "clerk-token" })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "ManagedRelayClientError",
+        traceId: "trace-managed-relay",
+      });
+    }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
+  });
+
   it.effect("lists account devices through the Clerk bearer client endpoint", () => {
     const fetchFn = ((input, init) => {
       expect(String(input)).toBe("https://relay.example.test/v1/client/devices");

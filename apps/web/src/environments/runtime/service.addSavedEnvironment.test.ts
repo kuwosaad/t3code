@@ -77,6 +77,7 @@ const mockClientGetConfig = vi.fn(async () => ({
 }));
 const mockConnectManagedCloudEnvironment = vi.fn();
 const mockReadManagedRelayClerkToken = vi.fn();
+const mockWsTransport = vi.fn();
 
 vi.mock("@t3tools/shared/remote", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/shared/remote")>()),
@@ -166,7 +167,7 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
 });
 
 vi.mock("../../rpc/wsTransport", () => ({
-  WsTransport: vi.fn(),
+  WsTransport: mockWsTransport,
 }));
 
 describe("addSavedEnvironment", () => {
@@ -1057,6 +1058,98 @@ describe("addSavedEnvironment", () => {
       }),
     );
 
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("does not mark a saved environment connected until its shell is ready", async () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    mockSavedRecords = [
+      {
+        environmentId,
+        label: "Remote environment",
+        httpBaseUrl: "https://remote.example.com/",
+        wsBaseUrl: "wss://remote.example.com/",
+        createdAt: "2026-04-14T00:00:00.000Z",
+        lastConnectedAt: null,
+      },
+    ];
+    mockReadSavedEnvironmentBearerToken.mockResolvedValue("bearer-token");
+
+    const { reconnectSavedEnvironment, resetEnvironmentServiceForTests } =
+      await import("./service");
+    await reconnectSavedEnvironment(environmentId);
+
+    const transportHandlers = mockWsTransport.mock.calls[0]?.[1] as
+      | {
+          readonly onAttempt?: () => void;
+          readonly onOpen?: () => void;
+        }
+      | undefined;
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0] as
+      | { readonly onReady?: (environmentId: EnvironmentId) => void }
+      | undefined;
+
+    transportHandlers?.onAttempt?.();
+    transportHandlers?.onOpen?.();
+    expect(mockPatchRuntime).not.toHaveBeenCalledWith(
+      environmentId,
+      expect.objectContaining({ connectionState: "connected" }),
+    );
+
+    connectionInput?.onReady?.(environmentId);
+    expect(mockPatchRuntime).toHaveBeenCalledWith(
+      environmentId,
+      expect.objectContaining({ connectionState: "connected" }),
+    );
+
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("coalesces concurrent saved-environment reconnect operations", async () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    mockSavedRecords = [
+      {
+        environmentId,
+        label: "Remote environment",
+        httpBaseUrl: "https://remote.example.com/",
+        wsBaseUrl: "wss://remote.example.com/",
+        createdAt: "2026-04-14T00:00:00.000Z",
+        lastConnectedAt: null,
+      },
+    ];
+    mockReadSavedEnvironmentBearerToken.mockResolvedValue("bearer-token");
+    let resolveReconnect: () => void = () => {
+      throw new Error("Reconnect promise was not initialized.");
+    };
+    const reconnect = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveReconnect = resolve;
+        }),
+    );
+    mockCreateEnvironmentConnection.mockImplementation(
+      (input: { knownEnvironment: { environmentId: EnvironmentId }; client: unknown }) => ({
+        kind: "saved",
+        environmentId: input.knownEnvironment.environmentId,
+        knownEnvironment: input.knownEnvironment,
+        client: input.client,
+        ensureBootstrapped: async () => undefined,
+        reconnect,
+        dispose: async () => undefined,
+      }),
+    );
+
+    const { reconnectSavedEnvironment, resetEnvironmentServiceForTests } =
+      await import("./service");
+    await reconnectSavedEnvironment(environmentId);
+
+    const first = reconnectSavedEnvironment(environmentId);
+    const second = reconnectSavedEnvironment(environmentId);
+    expect(second).toBe(first);
+    expect(reconnect).toHaveBeenCalledOnce();
+
+    resolveReconnect();
+    await first;
     await resetEnvironmentServiceForTests();
   });
 });

@@ -1,11 +1,11 @@
 import type {
   EnvironmentScopedProjectShell,
   EnvironmentScopedThreadShell,
-  VcsStatusState,
 } from "@t3tools/client-runtime";
 import { SymbolView } from "expo-symbols";
 import { useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -17,7 +17,6 @@ import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
 import type { RemoteCatalogState } from "../../state/use-remote-catalog";
-import { useVcsStatus } from "../../state/use-vcs-status";
 import { threadStatusTone } from "../threads/threadPresentation";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
@@ -29,6 +28,7 @@ interface HomeScreenProps {
   readonly savedConnectionsById: Readonly<Record<string, SavedRemoteConnection>>;
   readonly searchQuery: string;
   readonly onAddConnection: () => void;
+  readonly onOpenEnvironments: () => void;
   readonly onSelectThread: (thread: EnvironmentScopedThreadShell) => void;
 }
 
@@ -167,27 +167,13 @@ function ProjectGroupLabel(props: {
   );
 }
 
-/* ─── Git summary line ──────────────────────────────────────────────── */
-
-function gitSummaryParts(gitStatus: VcsStatusState): ReadonlyArray<string> {
-  if (!gitStatus.data) return [];
-  const { data } = gitStatus;
-  const parts: string[] = [];
-  if (data.hasWorkingTreeChanges) {
-    parts.push(`${data.workingTree.files.length} changed`);
-  }
-  if (data.aheadCount > 0) parts.push(`${data.aheadCount} ahead`);
-  if (data.behindCount > 0) parts.push(`${data.behindCount} behind`);
-  if (data.pr?.state === "open") parts.push(`PR #${data.pr.number}`);
-  return parts;
-}
-
 /* ─── Thread row ─────────────────────────────────────────────────────── */
 
 function ThreadRow(props: {
   readonly thread: EnvironmentScopedThreadShell;
-  readonly projectCwd: string | null;
+  readonly environmentLabel: string | null;
   readonly onPress: () => void;
+  readonly disabled?: boolean;
   readonly isLast: boolean;
 }) {
   const separatorColor = useThemeColor("--color-separator");
@@ -195,18 +181,16 @@ function ThreadRow(props: {
   const tone = threadStatusTone(props.thread);
   const timestamp = relativeTime(props.thread.updatedAt ?? props.thread.createdAt);
   const branch = props.thread.branch;
-
-  // Subscribe to live git status — only when thread has a branch set.
-  // Threads sharing the same cwd share one WS subscription via ref-counting.
-  const cwd = branch ? (props.thread.worktreePath ?? props.projectCwd) : null;
-  const gitStatus = useVcsStatus({
-    environmentId: cwd ? props.thread.environmentId : null,
-    cwd,
-  });
-  const gitParts = gitSummaryParts(gitStatus);
+  const subtitleParts = [props.environmentLabel, branch].filter((part): part is string =>
+    Boolean(part),
+  );
 
   return (
-    <Pressable onPress={props.onPress} style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
+    <Pressable
+      disabled={props.disabled}
+      onPress={props.onPress}
+      style={({ pressed }) => ({ opacity: props.disabled ? 0.48 : pressed ? 0.7 : 1 })}
+    >
       <View
         style={{
           flexDirection: "row",
@@ -261,8 +245,8 @@ function ThreadRow(props: {
             </View>
           </View>
 
-          {/* Branch + git info */}
-          {branch ? (
+          {/* Environment + branch */}
+          {subtitleParts.length > 0 ? (
             <View className="flex-row items-center gap-1.5" style={{ marginTop: 1 }}>
               <SymbolView
                 name="arrow.triangle.branch"
@@ -275,13 +259,8 @@ function ThreadRow(props: {
                 numberOfLines={1}
                 style={{ fontFamily: "monospace" }}
               >
-                {branch}
+                {subtitleParts.join(" · ")}
               </Text>
-              {gitParts.length > 0 ? (
-                <Text className="text-[11px] text-foreground-tertiary">
-                  {" · " + gitParts.join(" · ")}
-                </Text>
-              ) : null}
             </View>
           ) : null}
         </View>
@@ -292,8 +271,58 @@ function ThreadRow(props: {
 
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
+function staleCatalogPillLabel(props: { readonly catalogState: RemoteCatalogState }): string {
+  const connectingEnvironments = props.catalogState.connectingEnvironments;
+  if (connectingEnvironments.length === 1) {
+    return `Reconnecting to ${connectingEnvironments[0]!.environmentLabel}`;
+  }
+  if (connectingEnvironments.length > 1) {
+    return `Reconnecting ${connectingEnvironments.length} environments`;
+  }
+  return "Not connected";
+}
+
+function StaleCatalogStatusPill(props: {
+  readonly catalogState: RemoteCatalogState;
+  readonly onPress: () => void;
+}) {
+  const iconColor = useThemeColor("--color-icon-muted");
+  const label = staleCatalogPillLabel(props);
+  const isReconnecting = props.catalogState.connectingEnvironments.length > 0;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={props.onPress}
+      className="flex-row items-center gap-2 rounded-full bg-card px-4 py-2.5"
+      style={{
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.12,
+        shadowRadius: 24,
+      }}
+    >
+      {isReconnecting ? (
+        <ActivityIndicator color={iconColor} size="small" />
+      ) : (
+        <SymbolView
+          name="wifi.slash"
+          size={15}
+          tintColor={iconColor}
+          type="monochrome"
+          weight="semibold"
+        />
+      )}
+      <Text className="max-w-[260px] text-[13px] font-t3-bold text-foreground" numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 export function HomeScreen(props: HomeScreenProps) {
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set());
+  const insets = useSafeAreaInsets();
   const accentColor = useThemeColor("--color-icon-muted");
 
   const toggleExpanded = useCallback((key: string) => {
@@ -350,77 +379,95 @@ export function HomeScreen(props: HomeScreenProps) {
   /* Empty states */
   const hasAnyThreads = props.threads.length > 0;
   const hasResults = filteredThreads.length > 0;
+  const isShowingUnavailableCachedData =
+    props.catalogState.isUsingCachedData && !props.catalogState.hasReadyEnvironment;
   const emptyState = deriveEmptyState({
     catalogState: props.catalogState,
     projectCount: props.projects.length,
   });
 
   return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      showsVerticalScrollIndicator={false}
-      keyboardDismissMode="on-drag"
-      keyboardShouldPersistTaps="handled"
-      className="flex-1 bg-screen"
-      contentContainerStyle={{
-        paddingHorizontal: 16,
-        paddingTop: 8,
-        paddingBottom: 24,
-        gap: 20,
-      }}
-    >
-      {!hasAnyThreads ? (
-        <View>
-          <EmptyState
-            title={emptyState.title}
-            detail={emptyState.detail}
-            actionLabel={!props.catalogState.hasReadyEnvironment ? "Add environment" : undefined}
-            onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
-          />
-          {emptyState.loading ? (
-            <View className="absolute right-5 top-5">
-              <ActivityIndicator color={accentColor} />
-            </View>
-          ) : null}
-        </View>
-      ) : !hasResults ? (
-        <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
-      ) : (
-        projectGroups.map((group) => {
-          const connection = props.savedConnectionsById[group.project.environmentId];
-          const isExpanded = expandedProjects.has(group.key);
-          const visibleThreads = isExpanded
-            ? group.threads
-            : group.threads.slice(0, COLLAPSED_THREAD_LIMIT);
-
-          return (
-            <View key={group.key}>
-              <ProjectGroupLabel
-                project={group.project}
-                totalThreadCount={group.threads.length}
-                httpBaseUrl={connection?.httpBaseUrl ?? null}
-                bearerToken={connection?.bearerToken ?? null}
-                isExpanded={isExpanded}
-                onToggleExpand={() => toggleExpanded(group.key)}
-              />
-              <View
-                className="overflow-hidden rounded-[20px] bg-card"
-                style={{ borderCurve: "continuous" }}
-              >
-                {visibleThreads.map((thread, i) => (
-                  <ThreadRow
-                    key={`${thread.environmentId}:${thread.id}`}
-                    thread={thread}
-                    projectCwd={group.project.workspaceRoot}
-                    onPress={() => props.onSelectThread(thread)}
-                    isLast={i === visibleThreads.length - 1}
-                  />
-                ))}
+    <View className="flex-1 bg-screen">
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+        keyboardDismissMode="on-drag"
+        keyboardShouldPersistTaps="handled"
+        className="flex-1"
+        contentContainerStyle={{
+          paddingHorizontal: 16,
+          paddingTop: 8,
+          paddingBottom: 24,
+          gap: 20,
+        }}
+      >
+        {!hasAnyThreads ? (
+          <View>
+            <EmptyState
+              title={emptyState.title}
+              detail={emptyState.detail}
+              actionLabel={!props.catalogState.hasReadyEnvironment ? "Add environment" : undefined}
+              onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
+            />
+            {emptyState.loading ? (
+              <View className="absolute right-5 top-5">
+                <ActivityIndicator color={accentColor} />
               </View>
-            </View>
-          );
-        })
-      )}
-    </ScrollView>
+            ) : null}
+          </View>
+        ) : !hasResults ? (
+          <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
+        ) : (
+          projectGroups.map((group) => {
+            const connection = props.savedConnectionsById[group.project.environmentId];
+            const isExpanded = expandedProjects.has(group.key);
+            const visibleThreads = isExpanded
+              ? group.threads
+              : group.threads.slice(0, COLLAPSED_THREAD_LIMIT);
+
+            return (
+              <View key={group.key}>
+                <ProjectGroupLabel
+                  project={group.project}
+                  totalThreadCount={group.threads.length}
+                  httpBaseUrl={connection?.httpBaseUrl ?? null}
+                  bearerToken={connection?.bearerToken ?? null}
+                  isExpanded={isExpanded}
+                  onToggleExpand={() => toggleExpanded(group.key)}
+                />
+                <View
+                  className="overflow-hidden rounded-[20px] bg-card"
+                  style={{ borderCurve: "continuous" }}
+                >
+                  {visibleThreads.map((thread, i) => (
+                    <ThreadRow
+                      key={`${thread.environmentId}:${thread.id}`}
+                      thread={thread}
+                      environmentLabel={
+                        props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
+                      }
+                      disabled={isShowingUnavailableCachedData}
+                      onPress={() => props.onSelectThread(thread)}
+                      isLast={i === visibleThreads.length - 1}
+                    />
+                  ))}
+                </View>
+              </View>
+            );
+          })
+        )}
+      </ScrollView>
+      {isShowingUnavailableCachedData ? (
+        <View
+          className="absolute left-0 right-0 items-center"
+          style={{ bottom: Math.max(insets.bottom, 18) + 76 }}
+        >
+          <StaleCatalogStatusPill
+            catalogState={props.catalogState}
+            onPress={props.onOpenEnvironments}
+          />
+        </View>
+      ) : null}
+    </View>
   );
 }

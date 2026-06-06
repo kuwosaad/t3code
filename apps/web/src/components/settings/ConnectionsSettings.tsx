@@ -29,7 +29,7 @@ import {
   type DesktopServerExposureState,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { WsRpcClient } from "@t3tools/client-runtime";
+import { findErrorTraceId, WsRpcClient } from "@t3tools/client-runtime";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 
@@ -302,7 +302,7 @@ function getSavedBackendStatusTooltip(
     return connectedAt ? `Connected for ${formatElapsedDurationLabel(connectedAt, nowMs)}` : null;
   }
 
-  if (connectionState === "connecting") {
+  if (connectionState === "connecting" || connectionState === "reconnecting") {
     return null;
   }
 
@@ -1478,12 +1478,14 @@ function SavedBackendListRow({
   const connectionState = runtime?.connectionState ?? "disconnected";
   const isConnected = connectionState === "connected";
   const isConnecting =
-    connectionState === "connecting" || reconnectingEnvironmentId === environmentId;
+    connectionState === "connecting" ||
+    connectionState === "reconnecting" ||
+    reconnectingEnvironmentId === environmentId;
   const isDisconnecting = disconnectingEnvironmentId === environmentId;
   const stateDotClassName =
     connectionState === "connected"
       ? "bg-success"
-      : connectionState === "connecting"
+      : connectionState === "connecting" || connectionState === "reconnecting"
         ? "bg-warning"
         : connectionState === "error"
           ? "bg-destructive"
@@ -1491,6 +1493,7 @@ function SavedBackendListRow({
   const descriptorLabel = runtime?.descriptor?.label ?? null;
   const displayLabel = descriptorLabel ?? record.label;
   const statusTooltip = getSavedBackendStatusTooltip(runtime, record, nowMs);
+  const errorTraceId = runtime?.lastErrorTraceId ?? null;
   const versionMismatch = resolveServerConfigVersionMismatch(runtime?.serverConfig);
   const metadataBits = [
     record.desktopSsh ? `SSH ${formatDesktopSshTarget(record.desktopSsh)}` : null,
@@ -1508,7 +1511,9 @@ function SavedBackendListRow({
               tooltipText={statusTooltip}
               dotClassName={stateDotClassName}
               pingClassName={
-                connectionState === "connecting" ? "bg-warning/60 duration-2000" : null
+                connectionState === "connecting" || connectionState === "reconnecting"
+                  ? "bg-warning/60 duration-2000"
+                  : null
               }
             />
             <h3 className="text-sm font-medium text-foreground">{displayLabel}</h3>
@@ -1527,6 +1532,20 @@ function SavedBackendListRow({
               <TriangleAlertIcon className="size-3.5 shrink-0" />
               Version drift: client {versionMismatch.clientVersion}, server{" "}
               {versionMismatch.serverVersion}.
+            </p>
+          ) : null}
+          {connectionState === "error" && runtime?.lastError ? (
+            <p className="flex min-w-0 items-center gap-2 text-destructive text-xs">
+              <span className="truncate">{runtime.lastError}</span>
+              {errorTraceId ? (
+                <button
+                  type="button"
+                  className="shrink-0 underline underline-offset-2"
+                  onClick={() => void navigator.clipboard.writeText(errorTraceId)}
+                >
+                  Copy trace ID
+                </button>
+              ) : null}
             </p>
           ) : null}
         </div>
@@ -1662,11 +1681,21 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       });
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Could not update T3 Cloud access.";
-      setOperationError(message);
+      const traceId = findErrorTraceId(cause);
+      console.error("[t3-cloud] Could not update T3 Cloud", { message, traceId, cause });
+      setOperationError(traceId ? `${message} Trace ID: ${traceId}` : message);
       toastManager.add({
         type: "error",
         title: "Could not update T3 Cloud",
         description: message,
+        data: traceId
+          ? {
+              secondaryActionProps: {
+                children: "Copy trace ID",
+                onClick: () => void navigator.clipboard?.writeText(traceId),
+              },
+            }
+          : undefined,
       });
     } finally {
       setIsUpdating(false);
@@ -1767,11 +1796,22 @@ function ConfiguredCloudRemoteEnvironmentRows({
         description: `${connection.label} is available through T3 Cloud.`,
       });
     } catch (cause) {
+      const message =
+        cause instanceof Error ? cause.message : "Could not connect the T3 Cloud environment.";
+      const traceId = findErrorTraceId(cause);
+      console.error("[t3-cloud] Could not connect environment", { message, traceId, cause });
       toastManager.add({
         type: "error",
         title: "Could not connect environment",
-        description:
-          cause instanceof Error ? cause.message : "Could not connect the T3 Cloud environment.",
+        description: message,
+        data: traceId
+          ? {
+              secondaryActionProps: {
+                children: "Copy trace ID",
+                onClick: () => void navigator.clipboard?.writeText(traceId),
+              },
+            }
+          : undefined,
       });
     } finally {
       setConnectingEnvironmentId(null);

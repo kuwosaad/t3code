@@ -17,6 +17,7 @@ import { TextInputWrapper } from "expo-paste-input";
 import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Image,
   Pressable,
   TextInput as RNTextInput,
@@ -81,6 +82,8 @@ export interface ThreadComposerProps {
   readonly placeholder: string;
   readonly bottomInset?: number;
   readonly connectionState: RemoteClientConnectionState;
+  readonly connectionError: string | null;
+  readonly environmentLabel: string | null;
   readonly selectedThread: OrchestrationThread;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
@@ -96,6 +99,7 @@ export interface ThreadComposerProps {
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => Promise<void>;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => Promise<void>;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => Promise<void>;
+  readonly onReconnectEnvironment: () => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
 }
 
@@ -154,6 +158,58 @@ function formatTitleCase(value: string): string {
   return value.length === 0 ? value : `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 }
 
+function composerConnectionStatus(input: {
+  readonly connectionError: string | null;
+  readonly connectionState: RemoteClientConnectionState;
+  readonly environmentLabel: string | null;
+}): { readonly kind: "disconnected" | "reconnecting"; readonly label: string } | null {
+  const environmentLabel = input.environmentLabel ?? "Environment";
+
+  if (input.connectionError !== null) {
+    return { kind: "disconnected", label: `${environmentLabel} is disconnected` };
+  }
+
+  switch (input.connectionState) {
+    case "connecting":
+    case "reconnecting":
+      return { kind: "reconnecting", label: `Reconnecting to ${environmentLabel}...` };
+    case "disconnected":
+    case "idle":
+      return { kind: "disconnected", label: `${environmentLabel} is disconnected` };
+    case "ready":
+      return null;
+  }
+}
+
+const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(props: {
+  readonly onPress: () => void;
+  readonly status: { readonly kind: "disconnected" | "reconnecting"; readonly label: string };
+}) {
+  const isReconnecting = props.status.kind === "reconnecting";
+
+  return (
+    <View className="items-center pb-2">
+      <Pressable
+        accessibilityRole="button"
+        onPress={props.onPress}
+        className="max-w-full flex-row items-center gap-2 rounded-full bg-white/90 px-3 py-2 shadow-sm active:opacity-70 dark:bg-neutral-900/90"
+      >
+        {isReconnecting ? (
+          <ActivityIndicator size="small" color="#8e8e93" />
+        ) : (
+          <View className="h-2 w-2 rounded-full bg-red-500" />
+        )}
+        <Text
+          className="max-w-[260px] text-[13px] font-t3-bold leading-[17px] text-foreground"
+          numberOfLines={1}
+        >
+          {props.status.label}
+        </Text>
+      </Pressable>
+    </View>
+  );
+});
+
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const isDarkMode = useColorScheme() === "dark";
   const themePlaceholderColor = useThemeColor("--color-placeholder");
@@ -196,6 +252,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const currentInteractionMode = props.selectedThread.interactionMode ?? "default";
+  const connectionStatus = composerConnectionStatus({
+    connectionError: props.connectionError,
+    connectionState: props.connectionState,
+    environmentLabel: props.environmentLabel,
+  });
   const toolbarFadeOpaque = isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)";
   const toolbarFadeTransparent = isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)";
   const selectedProviderStatus = useMemo(() => {
@@ -650,6 +711,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               onSelect={handleCommandSelect}
             />
           </View>
+        ) : null}
+
+        {connectionStatus ? (
+          <ComposerConnectionStatusPill
+            status={connectionStatus}
+            onPress={props.onReconnectEnvironment}
+          />
         ) : null}
 
         <ComposerSurface

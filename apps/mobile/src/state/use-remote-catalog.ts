@@ -75,6 +75,7 @@ export interface RemoteCatalogState {
   readonly hasPendingShellSnapshot: boolean;
   readonly hasReadyEnvironment: boolean;
   readonly hasConnectingEnvironment: boolean;
+  readonly connectingEnvironments: ReadonlyArray<ConnectedEnvironmentSummary>;
   readonly connectionState: EnvironmentConnectionState;
   readonly connectionError: string | null;
   readonly shellSnapshotError: string | null;
@@ -155,6 +156,11 @@ export function useRemoteCatalog() {
         break;
       }
     }
+    const connectingEnvironments = connectedEnvironments.filter(
+      (environment) =>
+        environment.connectionState === "connecting" ||
+        environment.connectionState === "reconnecting",
+    );
     return {
       isLoadingSavedConnections: isLoadingSavedConnection,
       hasSavedConnections: catalogEnvironmentIds.length > 0,
@@ -163,11 +169,8 @@ export function useRemoteCatalog() {
       hasReadyEnvironment: connectedEnvironments.some(
         (environment) => environment.connectionState === "ready",
       ),
-      hasConnectingEnvironment: connectedEnvironments.some(
-        (environment) =>
-          environment.connectionState === "connecting" ||
-          environment.connectionState === "reconnecting",
-      ),
+      hasConnectingEnvironment: connectingEnvironments.length > 0,
+      connectingEnvironments,
       connectionState: connectionState ?? overallConnectionState,
       connectionError,
       shellSnapshotError,

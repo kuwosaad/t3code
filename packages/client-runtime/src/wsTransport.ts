@@ -74,7 +74,7 @@ export class WsTransport {
   private readonly streamRequestStartListeners = new Set<
     (info: { readonly tag: string }) => void
   >();
-  private reconnectChain: Promise<void> = Promise.resolve();
+  private pendingReconnect: Promise<void> | null = null;
   private session: TransportSession;
 
   constructor(
@@ -223,7 +223,11 @@ export class WsTransport {
       throw new Error("Transport disposed");
     }
 
-    const reconnectOperation = this.reconnectChain.then(async () => {
+    if (this.pendingReconnect) {
+      return await this.pendingReconnect;
+    }
+
+    const reconnectOperation = (async () => {
       if (this.disposed) {
         throw new Error("Transport disposed");
       }
@@ -238,16 +242,26 @@ export class WsTransport {
       const previousSession = this.session;
       this.session = this.createSession();
       await this.closeSession(previousSession);
-    });
+    })();
 
-    this.reconnectChain = reconnectOperation.catch(() => undefined);
-    await reconnectOperation;
+    this.pendingReconnect = reconnectOperation;
+    try {
+      await reconnectOperation;
+    } finally {
+      if (this.pendingReconnect === reconnectOperation) {
+        this.pendingReconnect = null;
+      }
+    }
   }
 
   isHeartbeatFresh(maxAgeMs = 15_000): boolean {
     return (
       this.lastHeartbeatPongAt !== null && performance.now() - this.lastHeartbeatPongAt <= maxAgeMs
     );
+  }
+
+  markConnectionUncertain(): void {
+    this.lastHeartbeatPongAt = null;
   }
 
   async dispose() {

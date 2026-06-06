@@ -6,16 +6,20 @@ import {
   RelayEnvironmentConnectScope,
   RelayEnvironmentStatusScope,
 } from "@t3tools/contracts/relay";
+import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/unstable/reactivity";
 
+import { findErrorTraceId } from "./errorTrace.ts";
 import { ManagedRelayClient } from "./managedRelay.ts";
 
 const DEFAULT_STALE_TIME_MS = 15_000;
 const DEFAULT_IDLE_TTL_MS = 5 * 60_000;
+const CLERK_TOKEN_EXPIRY_SKEW_MS = 5_000;
 
 export interface ManagedRelaySession {
   readonly accountId: string;
@@ -25,7 +29,19 @@ export interface ManagedRelaySession {
 export interface ManagedRelaySnapshotState<A> {
   readonly data: A | null;
   readonly error: string | null;
+  readonly errorTraceId: string | null;
   readonly isPending: boolean;
+}
+
+export interface ManagedRelayQueryEvent {
+  readonly operation: "environments" | "devices" | "environment-status";
+  readonly stage: "clerk-token" | "relay-request" | "validation";
+  readonly phase: "start" | "success" | "failure";
+  readonly accountId: string;
+  readonly environmentId?: string;
+  readonly durationMs?: number;
+  readonly message?: string;
+  readonly traceId?: string | null;
 }
 
 export class ManagedRelaySessionError extends Data.TaggedError("ManagedRelaySessionError")<{
@@ -46,17 +62,58 @@ export function createManagedRelaySession(input: {
   readonly accountId: string;
   readonly readClerkToken: () => Promise<string | null>;
 }): ManagedRelaySession {
+  let cachedToken: { readonly token: string; readonly expiresAtMillis: number } | null = null;
+  let pendingToken: Promise<string | null> | null = null;
+
+  const readCachedClerkToken = async (nowMillis: number): Promise<string | null> => {
+    if (cachedToken && cachedToken.expiresAtMillis > nowMillis + CLERK_TOKEN_EXPIRY_SKEW_MS) {
+      return cachedToken.token;
+    }
+    if (pendingToken) {
+      return await pendingToken;
+    }
+
+    const operation = input.readClerkToken().then((token) => {
+      if (!token) {
+        cachedToken = null;
+        return null;
+      }
+      try {
+        const expiresAtSeconds = decodeRelayJwt(token).exp;
+        cachedToken =
+          typeof expiresAtSeconds === "number"
+            ? { token, expiresAtMillis: expiresAtSeconds * 1_000 }
+            : null;
+      } catch {
+        cachedToken = null;
+      }
+      return token;
+    });
+    pendingToken = operation;
+    try {
+      return await operation;
+    } finally {
+      if (pendingToken === operation) {
+        pendingToken = null;
+      }
+    }
+  };
+
   return {
     accountId: input.accountId,
     readClerkToken: () =>
-      Effect.tryPromise({
-        try: input.readClerkToken,
-        catch: (cause) =>
-          new ManagedRelaySessionError({
-            message: "Could not obtain the T3 Cloud session token.",
-            cause,
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((nowMillis) =>
+          Effect.tryPromise({
+            try: () => readCachedClerkToken(nowMillis),
+            catch: (cause) =>
+              new ManagedRelaySessionError({
+                message: "Could not obtain the T3 Cloud session token.",
+                cause,
+              }),
           }),
-      }),
+        ),
+      ),
   };
 }
 
@@ -188,13 +245,16 @@ export function readManagedRelaySnapshotState<A>(
   result: AsyncResult.AsyncResult<A, unknown>,
 ): ManagedRelaySnapshotState<A> {
   let error: string | null = null;
+  let errorTraceId: string | null = null;
   if (result._tag === "Failure") {
     const cause = Cause.squash(result.cause);
     error = cause instanceof Error ? cause.message : "Could not load T3 Cloud data.";
+    errorTraceId = findErrorTraceId(cause);
   }
   return {
     data: Option.getOrNull(AsyncResult.value(result)),
     error,
+    errorTraceId,
     isPending: result.waiting,
   };
 }
@@ -204,18 +264,55 @@ export function createManagedRelayQueryManager(
   options?: {
     readonly staleTimeMs?: number;
     readonly idleTtlMs?: number;
+    readonly onQueryEvent?: (event: ManagedRelayQueryEvent) => void;
   },
 ) {
   const staleTime = options?.staleTimeMs ?? DEFAULT_STALE_TIME_MS;
   const idleTtl = options?.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
+  const observe = <A, E, R>(
+    input: Omit<ManagedRelayQueryEvent, "phase" | "durationMs" | "message" | "traceId">,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    Effect.gen(function* () {
+      const startedAt = yield* Clock.currentTimeMillis;
+      options?.onQueryEvent?.({ ...input, phase: "start" });
+      return yield* effect.pipe(
+        Effect.onExit((exit) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.map((finishedAt) => {
+              const durationMs = finishedAt - startedAt;
+              if (exit._tag === "Success") {
+                options?.onQueryEvent?.({ ...input, phase: "success", durationMs });
+                return;
+              }
+              const error = Cause.squash(exit.cause);
+              options?.onQueryEvent?.({
+                ...input,
+                phase: "failure",
+                durationMs,
+                message: error instanceof Error ? error.message : String(error),
+                traceId: findErrorTraceId(error),
+              });
+            }),
+          ),
+        ),
+      );
+    });
 
   const environmentsAtom = Atom.family((accountId: string) =>
     runtime
       .atom((get) =>
         Effect.gen(function* () {
-          const clerkToken = yield* requireClerkToken(get, accountId);
+          const base = { operation: "environments" as const, accountId };
+          const clerkToken = yield* observe(
+            { ...base, stage: "clerk-token" },
+            requireClerkToken(get, accountId),
+          );
           const relay = yield* ManagedRelayClient;
-          return yield* relay.listEnvironments({ clerkToken });
+          return yield* observe(
+            { ...base, stage: "relay-request" },
+            relay.listEnvironments({ clerkToken }),
+          );
         }),
       )
       .pipe(
@@ -229,9 +326,16 @@ export function createManagedRelayQueryManager(
     runtime
       .atom((get) =>
         Effect.gen(function* () {
-          const clerkToken = yield* requireClerkToken(get, accountId);
+          const base = { operation: "devices" as const, accountId };
+          const clerkToken = yield* observe(
+            { ...base, stage: "clerk-token" },
+            requireClerkToken(get, accountId),
+          );
           const relay = yield* ManagedRelayClient;
-          return yield* relay.listDevices({ clerkToken });
+          return yield* observe(
+            { ...base, stage: "relay-request" },
+            relay.listDevices({ clerkToken }),
+          );
         }),
       )
       .pipe(
@@ -246,14 +350,28 @@ export function createManagedRelayQueryManager(
     return runtime
       .atom((get) =>
         Effect.gen(function* () {
-          const clerkToken = yield* requireClerkToken(get, accountId);
-          const relay = yield* ManagedRelayClient;
-          const status = yield* relay.getEnvironmentStatus({
-            clerkToken,
-            scopes: [RelayEnvironmentStatusScope, RelayEnvironmentConnectScope],
+          const base = {
+            operation: "environment-status" as const,
+            accountId,
             environmentId: environment.environmentId,
-          });
-          return yield* validateEnvironmentStatus(environment, status);
+          };
+          const clerkToken = yield* observe(
+            { ...base, stage: "clerk-token" },
+            requireClerkToken(get, accountId),
+          );
+          const relay = yield* ManagedRelayClient;
+          const status = yield* observe(
+            { ...base, stage: "relay-request" },
+            relay.getEnvironmentStatus({
+              clerkToken,
+              scopes: [RelayEnvironmentStatusScope, RelayEnvironmentConnectScope],
+              environmentId: environment.environmentId,
+            }),
+          );
+          return yield* observe(
+            { ...base, stage: "validation" },
+            validateEnvironmentStatus(environment, status),
+          );
         }),
       )
       .pipe(

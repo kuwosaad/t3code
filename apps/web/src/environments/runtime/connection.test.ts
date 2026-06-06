@@ -133,6 +133,9 @@ function createTestClient(config?: { readonly emitInitialSnapshot?: boolean }) {
         });
       }
     },
+    emitShellResubscribe: () => {
+      shellResubscribe?.();
+    },
   };
 }
 
@@ -235,6 +238,79 @@ describe("createEnvironmentConnection", () => {
       environmentId,
     );
 
+    await connection.dispose();
+  });
+
+  it("coalesces concurrent reconnects until a fresh shell snapshot arrives", async () => {
+    const environmentId = EnvironmentId.make("env-1");
+    const { client, emitShellSnapshot } = createTestClient();
+    const onReconnectStart = vi.fn();
+    const onReady = vi.fn();
+    const connection = createEnvironmentConnection({
+      kind: "saved",
+      knownEnvironment: {
+        id: "env-1",
+        label: "Remote env",
+        source: "manual",
+        target: {
+          httpBaseUrl: "http://example.test",
+          wsBaseUrl: "ws://example.test",
+        },
+        environmentId,
+      },
+      client,
+      applyShellEvent: vi.fn(),
+      syncShellSnapshot: vi.fn(),
+      onReady,
+      onReconnectStart,
+    });
+
+    await connection.ensureBootstrapped();
+    onReady.mockClear();
+
+    const first = connection.reconnect();
+    const second = connection.reconnect();
+
+    expect(second).toBe(first);
+    expect(client.reconnect).toHaveBeenCalledTimes(1);
+    expect(onReconnectStart).toHaveBeenCalledOnce();
+
+    emitShellSnapshot(2);
+    await first;
+
+    expect(onReady).toHaveBeenCalledWith(environmentId);
+    await connection.dispose();
+  });
+
+  it("keeps readiness waiters attached across duplicate resubscribe notifications", async () => {
+    const environmentId = EnvironmentId.make("env-1");
+    const { client, emitShellResubscribe, emitShellSnapshot } = createTestClient();
+    const connection = createEnvironmentConnection({
+      kind: "saved",
+      knownEnvironment: {
+        id: "env-1",
+        label: "Remote env",
+        source: "manual",
+        target: {
+          httpBaseUrl: "http://example.test",
+          wsBaseUrl: "ws://example.test",
+        },
+        environmentId,
+      },
+      client,
+      applyShellEvent: vi.fn(),
+      syncShellSnapshot: vi.fn(),
+    });
+
+    await connection.ensureBootstrapped();
+    const reconnect = connection.reconnect();
+    const readiness = connection.ensureBootstrapped();
+
+    emitShellResubscribe();
+    emitShellResubscribe();
+    emitShellSnapshot(2);
+
+    await Promise.all([reconnect, readiness]);
     await connection.dispose();
   });
 
