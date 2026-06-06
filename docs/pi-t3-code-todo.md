@@ -53,10 +53,10 @@ Make Pi available inside T3 Code as a provider, while keeping Pi as the runtime 
 - [x] Map Pi `input` to T3 user input request
 - [x] Map Pi `editor` to T3 user input request
 - [x] Send T3 answers back to Pi as `extension_ui_response`
-- [ ] Fetch Pi `get_commands`
-- [ ] Surface Pi extension commands in T3 command UI
-- [ ] Surface Pi prompt templates in T3 command UI
-- [ ] Surface Pi skills as `skill:<name>` commands
+- [x] Fetch Pi `get_commands`
+- [x] Surface Pi extension commands in T3 command UI
+- [x] Surface Pi prompt templates in T3 command UI
+- [x] Surface Pi skills as `skill:<name>` commands
 
 ### PR 5 — Polish + docs
 
