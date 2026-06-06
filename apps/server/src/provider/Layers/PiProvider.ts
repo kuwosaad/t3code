@@ -8,7 +8,7 @@ import {
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
+import * as Result from "effect/Result";
 
 import {
   buildServerProvider,
@@ -36,13 +36,17 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 // ───── helpers ─────────────────────────────────────────────────────────────
 
-function piEnvFromSettings(settings: PiSettings, environment: NodeJS.ProcessEnv): Record<string, string> {
+function piEnvFromSettings(
+  settings: PiSettings,
+  environment: NodeJS.ProcessEnv,
+): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(environment)) {
     if (value !== undefined) env[key] = value;
   }
   if (settings.configDir.trim().length > 0) env.PI_CODING_AGENT_DIR = settings.configDir.trim();
-  if (settings.sessionDir.trim().length > 0) env.PI_CODING_AGENT_SESSION_DIR = settings.sessionDir.trim();
+  if (settings.sessionDir.trim().length > 0)
+    env.PI_CODING_AGENT_SESSION_DIR = settings.sessionDir.trim();
   return env;
 }
 
@@ -59,6 +63,16 @@ function modelName(modelId: string): string {
   // Extract a display name from the model slug
   const parts = modelId.split("/");
   return parts[parts.length - 1] ?? modelId;
+}
+
+function formatPiVersionFailure(detail: string): string {
+  return detail.toLowerCase().includes("enoent")
+    ? "Pi CLI was not found. Install Pi or set the full path to the `pi` binary in provider settings."
+    : `T3 Code could not run the Pi CLI health check. Check the binary path and try \`pi --version\` in a terminal. Details: ${detail}`;
+}
+
+function formatPiRuntimeProbeFailure(detail: string): string {
+  return `Pi is installed, but T3 Code could not read Pi models or commands over RPC. Check Pi auth/config, model provider settings, and launch arguments. Details: ${detail}`;
 }
 
 function modelsFromPi(input: {
@@ -84,12 +98,7 @@ function modelsFromPi(input: {
     ),
   ];
 
-  return providerModelsFromSettings(
-    builtIn,
-    PROVIDER,
-    input.settings.customModels,
-    capabilities,
-  );
+  return providerModelsFromSettings(builtIn, PROVIDER, input.settings.customModels, capabilities);
 }
 
 // ───── model / command probing ─────────────────────────────────────────────
@@ -138,15 +147,22 @@ async function probePiRuntime(
   });
   try {
     await client.start();
-    const response = await client.request<{ models?: ReadonlyArray<PiModelInfo> }>({ type: "get_available_models" } as any);
-    const models = response.success && response.data && Array.isArray(response.data.models)
-      ? response.data.models
-      : [];
+    const response = await client.request<{ models?: ReadonlyArray<PiModelInfo> }>({
+      type: "get_available_models",
+    } as any);
+    const models =
+      response.success && response.data && Array.isArray(response.data.models)
+        ? response.data.models
+        : [];
 
     let slashCommands: ReadonlyArray<ServerProviderSlashCommand> = [];
     try {
-      const commandResponse = await client.request<{ commands?: unknown }>({ type: "get_commands" } as any);
-      slashCommands = commandResponse.success ? parsePiCommands(commandResponse.data?.commands) : [];
+      const commandResponse = await client.request<{ commands?: unknown }>({
+        type: "get_commands",
+      } as any);
+      slashCommands = commandResponse.success
+        ? parsePiCommands(commandResponse.data?.commands)
+        : [];
     } catch {
       slashCommands = [];
     }
@@ -193,10 +209,10 @@ export function checkPiProviderStatus(
         new PiProbeError({
           detail: cause instanceof Error ? cause.message : String(cause),
         }),
-    }).pipe(Effect.exit);
+    }).pipe(Effect.result);
 
-    if (Exit.isFailure(versionExit)) {
-      const detail = versionExit.cause instanceof PiProbeError ? versionExit.cause.detail : "Unknown error";
+    if (Result.isFailure(versionExit)) {
+      const detail = versionExit.failure.detail;
       return buildServerProvider({
         presentation: PI_PRESENTATION,
         enabled: settings.enabled,
@@ -207,14 +223,12 @@ export function checkPiProviderStatus(
           version: null,
           status: "error",
           auth: { status: "unknown" },
-          message: detail.toLowerCase().includes("enoent")
-            ? "Pi CLI (`pi`) is not installed or not on PATH."
-            : `Failed to execute Pi CLI health check: ${detail}`,
+          message: formatPiVersionFailure(detail),
         },
       });
     }
 
-    const version = parseGenericCliVersion(versionExit.value);
+    const version = parseGenericCliVersion(versionExit.success);
 
     // ── model probe ──
     let liveModels: ReadonlyArray<PiModelInfo> = [];
@@ -232,16 +246,16 @@ export function checkPiProviderStatus(
         new PiProbeError({
           detail: cause instanceof Error ? cause.message : String(cause),
         }),
-    }).pipe(Effect.exit);
+    }).pipe(Effect.result);
 
-    if (Exit.isFailure(modelExit)) {
-      const detail = modelExit.cause instanceof PiProbeError ? modelExit.cause.detail : "Unknown error";
+    if (Result.isFailure(modelExit)) {
+      const detail = modelExit.failure.detail;
       status = "warning";
       auth = { status: "unknown", type: "cli" };
-      probeMessage = `Pi CLI is installed, but model probing failed: ${detail}`;
+      probeMessage = formatPiRuntimeProbeFailure(detail);
     } else {
-      liveModels = modelExit.value.models;
-      slashCommands = modelExit.value.slashCommands;
+      liveModels = modelExit.success.models;
+      slashCommands = modelExit.success.slashCommands;
     }
 
     return buildServerProvider({

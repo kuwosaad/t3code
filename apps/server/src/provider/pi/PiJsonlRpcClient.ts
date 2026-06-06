@@ -79,7 +79,9 @@ export class PiJsonlRpcClient {
     stdout.on("line", (line) => this.handleLine(line));
 
     child.on("error", (error) => {
-      this.rejectAll(new PiRpcClientError(`Failed to start Pi process: ${error.message}`, { cause: error }));
+      this.rejectAll(
+        new PiRpcClientError(`Failed to start Pi process: ${error.message}`, { cause: error }),
+      );
     });
 
     child.on("exit", (code, signal) => {
@@ -100,7 +102,9 @@ export class PiJsonlRpcClient {
     return new Promise((resolve, reject) => {
       const onError = (error: Error) => {
         cleanup();
-        reject(new PiRpcClientError(`Failed to start Pi process: ${error.message}`, { cause: error }));
+        reject(
+          new PiRpcClientError(`Failed to start Pi process: ${error.message}`, { cause: error }),
+        );
       };
       const cleanup = () => child.off("error", onError);
       child.once("error", onError);

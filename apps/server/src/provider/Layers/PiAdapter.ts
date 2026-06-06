@@ -33,7 +33,11 @@ import {
 } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import { PiJsonlRpcClient } from "../pi/PiJsonlRpcClient.ts";
-import { isPiExtensionUiRequest, type PiExtensionUiRequest, type PiRpcEvent } from "../pi/PiRpcTypes.ts";
+import {
+  isPiExtensionUiRequest,
+  type PiExtensionUiRequest,
+  type PiRpcEvent,
+} from "../pi/PiRpcTypes.ts";
 
 const PROVIDER = ProviderDriverKind.make("pi");
 
@@ -71,19 +75,24 @@ function piArgsFromSettings(settings: PiSettings): ReadonlyArray<string> {
   return args;
 }
 
-function piEnvFromSettings(settings: PiSettings, environment: NodeJS.ProcessEnv): Record<string, string> {
+function piEnvFromSettings(
+  settings: PiSettings,
+  environment: NodeJS.ProcessEnv,
+): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(environment)) {
     if (value !== undefined) env[key] = value;
   }
   if (settings.configDir.trim().length > 0) env.PI_CODING_AGENT_DIR = settings.configDir.trim();
-  if (settings.sessionDir.trim().length > 0) env.PI_CODING_AGENT_SESSION_DIR = settings.sessionDir.trim();
+  if (settings.sessionDir.trim().length > 0)
+    env.PI_CODING_AGENT_SESSION_DIR = settings.sessionDir.trim();
   return env;
 }
 
 function textFromRecord(value: Record<string, unknown>): string {
   for (const key of ["assistantMessageEvent", "partialResult", "result"] as const) {
-    if (value[key] && typeof value[key] === "object") return textFromRecord(value[key] as Record<string, unknown>);
+    if (value[key] && typeof value[key] === "object")
+      return textFromRecord(value[key] as Record<string, unknown>);
   }
 
   for (const key of ["text", "delta", "output", "stdout", "stderr"] as const) {
@@ -91,7 +100,8 @@ function textFromRecord(value: Record<string, unknown>): string {
   }
 
   if (Array.isArray(value.content)) return (value.content as any[]).map(textFromUnknown).join("");
-  if (value.message && typeof value.message === "object") return textFromRecord(value.message as Record<string, unknown>);
+  if (value.message && typeof value.message === "object")
+    return textFromRecord(value.message as Record<string, unknown>);
   return "";
 }
 
@@ -112,7 +122,8 @@ function toolNameFromEvent(event: PiRpcEvent): string {
 function toolKeyFromEvent(event: PiRpcEvent): string {
   const record = event as Record<string, unknown>;
   for (const key of ["toolCallId", "toolUseId", "callId", "id"] as const) {
-    if (typeof record[key] === "string" && (record[key] as string).length > 0) return record[key] as string;
+    if (typeof record[key] === "string" && (record[key] as string).length > 0)
+      return record[key] as string;
   }
   return toolNameFromEvent(event);
 }
@@ -120,7 +131,13 @@ function toolKeyFromEvent(event: PiRpcEvent): string {
 function toolItemType(toolName: string) {
   const nl = toolName.toLowerCase();
   if (nl.includes("bash")) return "command_execution" as const;
-  if (nl.includes("edit") || nl.includes("write") || nl.includes("patch") || nl.includes("multiedit")) return "file_change" as const;
+  if (
+    nl.includes("edit") ||
+    nl.includes("write") ||
+    nl.includes("patch") ||
+    nl.includes("multiedit")
+  )
+    return "file_change" as const;
   if (nl.includes("mcp") || nl.includes("titan")) return "mcp_tool_call" as const;
   if (nl.includes("agent") || nl.includes("subagent")) return "collab_agent_tool_call" as const;
   if (nl.includes("web") || nl.includes("search")) return "web_search" as const;
@@ -134,16 +151,14 @@ function ensureContext(
 ): PiSessionContext {
   const context = sessions.get(threadId);
   if (!context) throw new ProviderAdapterSessionNotFoundError({ provider: PROVIDER, threadId });
-  if (Ref.getUnsafe(context.stopped)) throw new ProviderAdapterSessionClosedError({ provider: PROVIDER, threadId });
+  if (Ref.getUnsafe(context.stopped))
+    throw new ProviderAdapterSessionClosedError({ provider: PROVIDER, threadId });
   return context;
 }
 
 // ───── main factory ────────────────────────────────────────────────────────
 
-export function makePiAdapter(
-  piSettings: PiSettings,
-  options?: PiAdapterLiveOptions,
-) {
+export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOptions) {
   return Effect.gen(function* () {
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("pi");
     const crypto = yield* Crypto.Crypto;
@@ -288,7 +303,11 @@ export function makePiAdapter(
         });
       }
       context.activeTurnId = undefined;
-      yield* updateSession(context, { status: "ready" as const }, { clearActiveTurnId: true, clearLastError: true });
+      yield* updateSession(
+        context,
+        { status: "ready" as const },
+        { clearActiveTurnId: true, clearLastError: true },
+      );
       yield* emit({
         ...(yield* buildEventBase({ threadId, raw })),
         type: "session.state.changed" as const,
@@ -303,14 +322,22 @@ export function makePiAdapter(
       event: PiExtensionUiRequest,
     ) {
       const threadId = context.session.threadId as unknown as ThreadId;
-      if (event.method === "setWidget" || event.method === "setStatus" || event.method === "setTitle" || event.method === "set_editor_text") {
+      if (
+        event.method === "setWidget" ||
+        event.method === "setStatus" ||
+        event.method === "setTitle" ||
+        event.method === "set_editor_text"
+      ) {
         return;
       }
 
       if (event.method === "notify") {
         yield* emit({
           ...(yield* buildEventBase({ threadId, raw: event })),
-          type: event.notifyType === "error" ? "runtime.error" as const : "runtime.warning" as const,
+          type:
+            event.notifyType === "error"
+              ? ("runtime.error" as const)
+              : ("runtime.warning" as const),
           payload: {
             message: event.message,
             ...(event.notifyType ? { detail: { notifyType: event.notifyType } } : {}),
@@ -339,17 +366,22 @@ export function makePiAdapter(
           ...(yield* buildEventBase({ threadId, requestId: event.id, raw: event })),
           type: "user-input.requested" as const,
           payload: {
-            questions: [{
-              id: event.id,
-              header: evTitle ?? "Input",
-              question: evTitle ?? "",
-              options: event.method === "select"
-                ? (event as Record<string, unknown>).options
-                  ? ((event as Record<string, unknown>).options as string[]).map((o: string) => ({ label: o, description: o }))
-                  : [{ label: "value", description: "Value" }]
-                : [{ label: "value", description: "Value" }],
-              ...(event.method === "select" ? { multiSelect: false } : {}),
-            }],
+            questions: [
+              {
+                id: event.id,
+                header: evTitle ?? "Input",
+                question: evTitle ?? "",
+                options:
+                  event.method === "select"
+                    ? (event as Record<string, unknown>).options
+                      ? ((event as Record<string, unknown>).options as string[]).map(
+                          (o: string) => ({ label: o, description: o }),
+                        )
+                      : [{ label: "value", description: "Value" }]
+                    : [{ label: "value", description: "Value" }],
+                ...(event.method === "select" ? { multiSelect: false } : {}),
+              },
+            ],
           },
         });
       }
@@ -369,9 +401,10 @@ export function makePiAdapter(
         return;
       }
 
-      const evType = typeof (event as Record<string, unknown>).type === "string"
-        ? (event as Record<string, unknown>).type as string
-        : "unknown";
+      const evType =
+        typeof (event as Record<string, unknown>).type === "string"
+          ? ((event as Record<string, unknown>).type as string)
+          : "unknown";
 
       switch (evType) {
         case "agent_start":
@@ -389,7 +422,11 @@ export function makePiAdapter(
           yield* emit({
             ...(yield* buildEventBase({ threadId, turnId, itemId: String(itemId), raw: event })),
             type: "item.started" as const,
-            payload: { itemType: "assistant_message" as const, status: "inProgress" as const, title: "Pi" },
+            payload: {
+              itemType: "assistant_message" as const,
+              status: "inProgress" as const,
+              title: "Pi",
+            },
           });
           break;
         }
@@ -401,7 +438,9 @@ export function makePiAdapter(
               ...(yield* buildEventBase({
                 threadId,
                 turnId,
-                itemId: context.activeAssistantItemId ? String(context.activeAssistantItemId) : undefined,
+                itemId: context.activeAssistantItemId
+                  ? String(context.activeAssistantItemId)
+                  : undefined,
                 raw: event,
               })),
               type: "content.delta" as const,
@@ -416,7 +455,9 @@ export function makePiAdapter(
             ...(yield* buildEventBase({
               threadId,
               turnId,
-              itemId: context.activeAssistantItemId ? String(context.activeAssistantItemId) : undefined,
+              itemId: context.activeAssistantItemId
+                ? String(context.activeAssistantItemId)
+                : undefined,
               raw: event,
             })),
             type: "item.completed" as const,
@@ -434,7 +475,12 @@ export function makePiAdapter(
           yield* emit({
             ...(yield* buildEventBase({ threadId, turnId, itemId: String(itemId), raw: event })),
             type: "item.started" as const,
-            payload: { itemType: toolItemType(tname), status: "inProgress" as const, title: tname, data: event },
+            payload: {
+              itemType: toolItemType(tname),
+              status: "inProgress" as const,
+              title: tname,
+              data: event,
+            },
           });
           break;
         }
@@ -445,7 +491,12 @@ export function makePiAdapter(
           if (tdelta.length > 0) {
             const itemId = context.activeToolItemIds.get(toolKeyFromEvent(event));
             yield* emit({
-              ...(yield* buildEventBase({ threadId, turnId, itemId: itemId ? String(itemId) : undefined, raw: event })),
+              ...(yield* buildEventBase({
+                threadId,
+                turnId,
+                itemId: itemId ? String(itemId) : undefined,
+                raw: event,
+              })),
               type: "content.delta" as const,
               payload: { streamKind: "command_output" as const, delta: tdelta },
             });
@@ -458,9 +509,19 @@ export function makePiAdapter(
           const key = toolKeyFromEvent(event);
           const itemId = context.activeToolItemIds.get(key);
           yield* emit({
-            ...(yield* buildEventBase({ threadId, turnId, itemId: itemId ? String(itemId) : undefined, raw: event })),
+            ...(yield* buildEventBase({
+              threadId,
+              turnId,
+              itemId: itemId ? String(itemId) : undefined,
+              raw: event,
+            })),
             type: "item.completed" as const,
-            payload: { itemType: toolItemType(tname), status: "completed" as const, title: tname, data: event },
+            payload: {
+              itemType: toolItemType(tname),
+              status: "completed" as const,
+              title: tname,
+              data: event,
+            },
           });
           context.activeToolItemIds.delete(key);
           break;
@@ -470,7 +531,11 @@ export function makePiAdapter(
           yield* emit({
             ...(yield* buildEventBase({ threadId, turnId, raw: event })),
             type: "item.started" as const,
-            payload: { itemType: "context_compaction" as const, status: "inProgress" as const, title: "Compacting" },
+            payload: {
+              itemType: "context_compaction" as const,
+              status: "inProgress" as const,
+              title: "Compacting",
+            },
           });
           break;
 
@@ -478,7 +543,11 @@ export function makePiAdapter(
           yield* emit({
             ...(yield* buildEventBase({ threadId, turnId, raw: event })),
             type: "item.completed" as const,
-            payload: { itemType: "context_compaction" as const, status: "completed" as const, title: "Compacted" },
+            payload: {
+              itemType: "context_compaction" as const,
+              status: "completed" as const,
+              title: "Compacted",
+            },
           });
           break;
 
@@ -494,11 +563,15 @@ export function makePiAdapter(
           if (context.activeTurnId) {
             yield* failActiveTurn(context, detail, event);
           } else {
-            yield* updateSession(context, { status: "closed" as const, lastError: detail }, { clearActiveTurnId: true });
+            yield* updateSession(
+              context,
+              { status: "closed" as const, lastError: detail },
+              { clearActiveTurnId: true },
+            );
             yield* emit({
               ...(yield* buildEventBase({ threadId, raw: event })),
               type: "session.exited" as const,
-              payload: { reason: detail, recoverable: true, exitKind: "error" as const }
+              payload: { reason: detail, recoverable: true, exitKind: "error" as const },
             });
           }
           yield* Ref.set(context.stopped, true);
@@ -763,7 +836,11 @@ export function makePiAdapter(
         yield* emit({
           ...(yield* buildEventBase({ threadId })),
           type: "session.exited" as const,
-          payload: { reason: "Session stopped.", recoverable: false, exitKind: "graceful" as const },
+          payload: {
+            reason: "Session stopped.",
+            recoverable: false,
+            exitKind: "graceful" as const,
+          },
         });
       }
     });
@@ -771,8 +848,7 @@ export function makePiAdapter(
     const listSessions = () =>
       Effect.sync(() => [...sessions.values()].map((c) => c.session as unknown as ProviderSession));
 
-    const hasSession = (threadId: ThreadId) =>
-      Effect.sync(() => sessions.has(threadId));
+    const hasSession = (threadId: ThreadId) => Effect.sync(() => sessions.has(threadId));
 
     // eslint-disable-next-line require-yield
     const readThread = Effect.fn("readThread")(function* (threadId: ThreadId) {
@@ -816,6 +892,11 @@ export function makePiAdapter(
       get streamEvents() {
         return Stream.fromQueue(runtimeEvents);
       },
-    } satisfies ProviderAdapterShape<ProviderAdapterRequestError | ProviderAdapterProcessError | ProviderAdapterSessionNotFoundError | ProviderAdapterSessionClosedError>;
+    } satisfies ProviderAdapterShape<
+      | ProviderAdapterRequestError
+      | ProviderAdapterProcessError
+      | ProviderAdapterSessionNotFoundError
+      | ProviderAdapterSessionClosedError
+    >;
   });
 }

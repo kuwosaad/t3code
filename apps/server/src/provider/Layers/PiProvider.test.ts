@@ -43,6 +43,42 @@ afterEach(() => {
   }
 });
 
+it.effect("PiProvider reports a helpful unavailable status when the Pi binary is missing", () =>
+  Effect.gen(function* () {
+    const status = yield* checkPiProviderStatus(
+      makeSettings("/definitely/missing/pi"),
+      process.env,
+    ).pipe(Effect.orDie);
+
+    assert.equal(status.installed, false);
+    assert.equal(status.status, "error");
+    assert.match(status.message ?? "", /Pi CLI was not found/);
+    assert.match(status.message ?? "", /full path/);
+  }),
+);
+
+it.effect("PiProvider keeps a fallback model and warning status when runtime probing fails", () =>
+  Effect.gen(function* () {
+    const binaryPath = makeFakePi(`
+      if (process.argv.includes("--version")) {
+        process.stdout.write("pi 1.2.3\\n");
+        process.exit(0);
+      }
+      process.stderr.write("rpc startup failed\\n");
+      process.exit(2);
+    `);
+
+    const status = yield* checkPiProviderStatus(makeSettings(binaryPath), process.env).pipe(
+      Effect.orDie,
+    );
+
+    assert.equal(status.installed, true);
+    assert.equal(status.status, "warning");
+    assert.match(status.message ?? "", /could not read Pi models or commands over RPC/);
+    assert.equal(status.models[0]?.slug, "claude-sonnet-4");
+  }),
+);
+
 it.effect("PiProvider includes probed Pi commands, prompts, and skills as slash commands", () =>
   Effect.gen(function* () {
     const binaryPath = makeFakePi(`
@@ -69,7 +105,9 @@ it.effect("PiProvider includes probed Pi commands, prompts, and skills as slash 
       });
     `);
 
-    const status = yield* checkPiProviderStatus(makeSettings(binaryPath), process.env).pipe(Effect.orDie);
+    const status = yield* checkPiProviderStatus(makeSettings(binaryPath), process.env).pipe(
+      Effect.orDie,
+    );
 
     assert.equal(status.installed, true);
     assert.equal(status.status, "ready");

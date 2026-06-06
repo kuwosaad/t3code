@@ -79,7 +79,10 @@ describe("PiJsonlRpcClient", () => {
     await client.request({ type: "get_state" });
     await client.stop();
 
-    assert.equal(events.some((event) => event.type === "json_parse_error"), true);
+    assert.equal(
+      events.some((event) => event.type === "json_parse_error"),
+      true,
+    );
   });
 
   it("times out unanswered requests", async () => {

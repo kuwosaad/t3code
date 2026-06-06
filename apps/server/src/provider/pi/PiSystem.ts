@@ -9,10 +9,15 @@ import { execFile, type ExecFileException } from "node:child_process";
  */
 export function runPiVersion(binaryPath: string, env: NodeJS.ProcessEnv): Promise<string> {
   return new Promise<string>((resolve, reject) => {
-    execFile(binaryPath, ["--version"], { env }, (error: ExecFileException | null, stdout: string) => {
-      if (error) reject(error);
-      else resolve(stdout.trim());
-    });
+    execFile(
+      binaryPath,
+      ["--version"],
+      { env },
+      (error: ExecFileException | null, stdout: string) => {
+        if (error) reject(error);
+        else resolve(stdout.trim());
+      },
+    );
   });
 }
 

@@ -1,9 +1,19 @@
 export type PiRpcCommand =
-  | { readonly id?: string; readonly type: "prompt"; readonly message: string; readonly images?: ReadonlyArray<unknown> }
+  | {
+      readonly id?: string;
+      readonly type: "prompt";
+      readonly message: string;
+      readonly images?: ReadonlyArray<unknown>;
+    }
   | { readonly id?: string; readonly type: "abort" }
   | { readonly id?: string; readonly type: "new_session"; readonly parentSession?: string }
   | { readonly id?: string; readonly type: "get_state" }
-  | { readonly id?: string; readonly type: "set_model"; readonly provider: string; readonly modelId: string }
+  | {
+      readonly id?: string;
+      readonly type: "set_model";
+      readonly provider: string;
+      readonly modelId: string;
+    }
   | { readonly id?: string; readonly type: "get_available_models" }
   | { readonly id?: string; readonly type: "get_messages" }
   | { readonly id?: string; readonly type: "get_commands" }
@@ -95,7 +105,10 @@ export interface PiSessionState {
   readonly pendingMessageCount?: number;
 }
 
-export type PiRpcEvent = PiRpcResponse | PiExtensionUiRequest | (Record<string, unknown> & { readonly type?: string });
+export type PiRpcEvent =
+  | PiRpcResponse
+  | PiExtensionUiRequest
+  | (Record<string, unknown> & { readonly type?: string });
 
 export function isPiRpcResponse(value: unknown): value is PiRpcResponse {
   return (
