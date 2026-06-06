@@ -28,7 +28,10 @@ function makeFakePi(source: string): string {
 }
 
 function makeFixturePi(fixtureName: string): string {
-  const lines = readFileSync(join(process.cwd(), "src/provider/pi/__fixtures__", fixtureName), "utf8")
+  const lines = readFileSync(
+    join(process.cwd(), "src/provider/pi/__fixtures__", fixtureName),
+    "utf8",
+  )
     .split(/\r?\n/)
     .filter((line) => line.trim().length > 0);
   return makeFakePi(`
@@ -110,14 +113,19 @@ it.effect("PiAdapter finalizes the turn when prompt returns success false", () =
       });
     `);
     const adapter = yield* makePiAdapter(makeSettings(binaryPath));
-    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 6)).pipe(Effect.forkChild);
+    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 6)).pipe(
+      Effect.forkChild,
+    );
     const threadId = ThreadId.make("pi-thread-prompt-failure");
 
     yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
     yield* adapter.sendTurn({ threadId, input: "hello" });
 
     const events = [...(yield* Fiber.join(eventsFiber))];
-    assert.equal(events.some((event) => event.type === "runtime.error"), true);
+    assert.equal(
+      events.some((event) => event.type === "runtime.error"),
+      true,
+    );
     const turnCompleted = events.find((event) => event.type === "turn.completed");
     assert.ok(turnCompleted);
     assert.equal(turnCompleted.payload.state, "failed");
@@ -130,14 +138,20 @@ it.effect("PiAdapter finalizes the turn when prompt returns success false", () =
 
 it.effect("PiAdapter round-trips Pi confirm requests as approval responses", () =>
   Effect.gen(function* () {
-    const adapter = yield* makePiAdapter(makeSettings(makeExtensionRequestPi({
-      type: "extension_ui_request",
-      id: "confirm-1",
-      method: "confirm",
-      title: "Allow tool?",
-      message: "Run command",
-    })));
-    const requestFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 5)).pipe(Effect.forkChild);
+    const adapter = yield* makePiAdapter(
+      makeSettings(
+        makeExtensionRequestPi({
+          type: "extension_ui_request",
+          id: "confirm-1",
+          method: "confirm",
+          title: "Allow tool?",
+          message: "Run command",
+        }),
+      ),
+    );
+    const requestFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 5)).pipe(
+      Effect.forkChild,
+    );
     const threadId = ThreadId.make("pi-thread-confirm-request");
 
     yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
@@ -148,8 +162,14 @@ it.effect("PiAdapter round-trips Pi confirm requests as approval responses", () 
     assert.ok(opened?.requestId);
     assert.equal(opened.payload.detail, "Allow tool?: Run command");
 
-    const responseFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(Effect.forkChild);
-    yield* adapter.respondToRequest(threadId, ApprovalRequestId.make(String(opened.requestId)), "accept");
+    const responseFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+      Effect.forkChild,
+    );
+    yield* adapter.respondToRequest(
+      threadId,
+      ApprovalRequestId.make(String(opened.requestId)),
+      "accept",
+    );
     const responseEvents = [...(yield* Fiber.join(responseFiber))];
     const resolved = responseEvents.find((event) => event.type === "request.resolved");
     const notify = responseEvents.find((event) => event.type === "runtime.warning");
@@ -160,14 +180,20 @@ it.effect("PiAdapter round-trips Pi confirm requests as approval responses", () 
 
 it.effect("PiAdapter round-trips Pi input requests as user input responses", () =>
   Effect.gen(function* () {
-    const adapter = yield* makePiAdapter(makeSettings(makeExtensionRequestPi({
-      type: "extension_ui_request",
-      id: "input-1",
-      method: "input",
-      title: "Project name",
-      placeholder: "my-app",
-    })));
-    const requestFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 5)).pipe(Effect.forkChild);
+    const adapter = yield* makePiAdapter(
+      makeSettings(
+        makeExtensionRequestPi({
+          type: "extension_ui_request",
+          id: "input-1",
+          method: "input",
+          title: "Project name",
+          placeholder: "my-app",
+        }),
+      ),
+    );
+    const requestFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 5)).pipe(
+      Effect.forkChild,
+    );
     const threadId = ThreadId.make("pi-thread-input-request");
 
     yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
@@ -179,10 +205,16 @@ it.effect("PiAdapter round-trips Pi input requests as user input responses", () 
     assert.equal(requested.payload.questions[0]?.header, "Project name");
     assert.equal(requested.payload.questions[0]?.question, "Project name");
 
-    const responseFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(Effect.forkChild);
-    yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make(String(requested.requestId)), {
-      "input-1": "titan-ui",
-    });
+    const responseFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+      Effect.forkChild,
+    );
+    yield* adapter.respondToUserInput(
+      threadId,
+      ApprovalRequestId.make(String(requested.requestId)),
+      {
+        "input-1": "titan-ui",
+      },
+    );
     const responseEvents = [...(yield* Fiber.join(responseFiber))];
     const resolved = responseEvents.find((event) => event.type === "user-input.resolved");
     const notify = responseEvents.find((event) => event.type === "runtime.warning");
@@ -193,16 +225,26 @@ it.effect("PiAdapter round-trips Pi input requests as user input responses", () 
 
 it.effect("PiAdapter maps Pi select and editor requests as user input", () =>
   Effect.gen(function* () {
-    const selectAdapter = yield* makePiAdapter(makeSettings(makeExtensionRequestPi({
-      type: "extension_ui_request",
-      id: "select-1",
-      method: "select",
-      title: "Choose mode",
-      options: ["fast", "safe"],
-    })));
-    const selectFiber = yield* Stream.runCollect(Stream.take(selectAdapter.streamEvents, 5)).pipe(Effect.forkChild);
+    const selectAdapter = yield* makePiAdapter(
+      makeSettings(
+        makeExtensionRequestPi({
+          type: "extension_ui_request",
+          id: "select-1",
+          method: "select",
+          title: "Choose mode",
+          options: ["fast", "safe"],
+        }),
+      ),
+    );
+    const selectFiber = yield* Stream.runCollect(Stream.take(selectAdapter.streamEvents, 5)).pipe(
+      Effect.forkChild,
+    );
     const selectThreadId = ThreadId.make("pi-thread-select-request");
-    yield* selectAdapter.startSession({ threadId: selectThreadId, cwd: process.cwd(), runtimeMode: "full-access" });
+    yield* selectAdapter.startSession({
+      threadId: selectThreadId,
+      cwd: process.cwd(),
+      runtimeMode: "full-access",
+    });
     yield* selectAdapter.sendTurn({ threadId: selectThreadId, input: "needs select" });
     const selectEvents = [...(yield* Fiber.join(selectFiber))];
     const selectRequested = selectEvents.find((event) => event.type === "user-input.requested");
@@ -212,16 +254,26 @@ it.effect("PiAdapter maps Pi select and editor requests as user input", () =>
       { label: "safe", description: "safe" },
     ]);
 
-    const editorAdapter = yield* makePiAdapter(makeSettings(makeExtensionRequestPi({
-      type: "extension_ui_request",
-      id: "editor-1",
-      method: "editor",
-      title: "Edit instructions",
-      prefill: "initial text",
-    })));
-    const editorFiber = yield* Stream.runCollect(Stream.take(editorAdapter.streamEvents, 5)).pipe(Effect.forkChild);
+    const editorAdapter = yield* makePiAdapter(
+      makeSettings(
+        makeExtensionRequestPi({
+          type: "extension_ui_request",
+          id: "editor-1",
+          method: "editor",
+          title: "Edit instructions",
+          prefill: "initial text",
+        }),
+      ),
+    );
+    const editorFiber = yield* Stream.runCollect(Stream.take(editorAdapter.streamEvents, 5)).pipe(
+      Effect.forkChild,
+    );
     const editorThreadId = ThreadId.make("pi-thread-editor-request");
-    yield* editorAdapter.startSession({ threadId: editorThreadId, cwd: process.cwd(), runtimeMode: "full-access" });
+    yield* editorAdapter.startSession({
+      threadId: editorThreadId,
+      cwd: process.cwd(),
+      runtimeMode: "full-access",
+    });
     yield* editorAdapter.sendTurn({ threadId: editorThreadId, input: "needs editor" });
     const editorEvents = [...(yield* Fiber.join(editorFiber))];
     const editorRequested = editorEvents.find((event) => event.type === "user-input.requested");
@@ -233,7 +285,9 @@ it.effect("PiAdapter maps Pi select and editor requests as user input", () =>
 it.effect("PiAdapter maps source-backed text turn fixtures", () =>
   Effect.gen(function* () {
     const adapter = yield* makePiAdapter(makeSettings(makeFixturePi("pi-text-turn.jsonl")));
-    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 12)).pipe(Effect.forkChild);
+    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 12)).pipe(
+      Effect.forkChild,
+    );
     const threadId = ThreadId.make("pi-thread-text-fixture");
 
     yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
@@ -241,7 +295,9 @@ it.effect("PiAdapter maps source-backed text turn fixtures", () =>
 
     const events = [...(yield* Fiber.join(eventsFiber))];
     const deltas = events
-      .filter((event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text")
+      .filter(
+        (event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+      )
       .map((event) => event.payload.delta);
     assert.deepEqual(deltas, ["hello", " world"]);
     const assistantStarted = events.find(
@@ -251,14 +307,19 @@ it.effect("PiAdapter maps source-backed text turn fixtures", () =>
       (event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text",
     );
     assert.ok(assistantStarted?.itemId);
-    assert.equal(assistantDeltas.every((event) => event.itemId === assistantStarted.itemId), true);
+    assert.equal(
+      assistantDeltas.every((event) => event.itemId === assistantStarted.itemId),
+      true,
+    );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("PiAdapter maps source-backed bash tool fixtures", () =>
   Effect.gen(function* () {
     const adapter = yield* makePiAdapter(makeSettings(makeFixturePi("pi-bash-turn.jsonl")));
-    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 14)).pipe(Effect.forkChild);
+    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 14)).pipe(
+      Effect.forkChild,
+    );
     const threadId = ThreadId.make("pi-thread-bash-fixture");
 
     yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
@@ -284,7 +345,9 @@ it.effect("PiAdapter maps source-backed bash tool fixtures", () =>
 it.effect("PiAdapter maps source-backed Titan tool fixtures", () =>
   Effect.gen(function* () {
     const adapter = yield* makePiAdapter(makeSettings(makeFixturePi("pi-titan-turn.jsonl")));
-    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 14)).pipe(Effect.forkChild);
+    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 14)).pipe(
+      Effect.forkChild,
+    );
     const threadId = ThreadId.make("pi-thread-titan-fixture");
 
     yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
@@ -306,7 +369,9 @@ it.effect("PiAdapter maps source-backed Titan tool fixtures", () =>
 it.effect("PiAdapter maps source-backed file edit tool fixtures", () =>
   Effect.gen(function* () {
     const adapter = yield* makePiAdapter(makeSettings(makeFixturePi("pi-file-edit-turn.jsonl")));
-    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 14)).pipe(Effect.forkChild);
+    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 14)).pipe(
+      Effect.forkChild,
+    );
     const threadId = ThreadId.make("pi-thread-file-edit-fixture");
 
     yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
@@ -332,7 +397,9 @@ it.effect("PiAdapter maps source-backed file edit tool fixtures", () =>
 it.effect("PiAdapter maps source-backed subagent tool fixtures", () =>
   Effect.gen(function* () {
     const adapter = yield* makePiAdapter(makeSettings(makeFixturePi("pi-subagent-turn.jsonl")));
-    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 14)).pipe(Effect.forkChild);
+    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 14)).pipe(
+      Effect.forkChild,
+    );
     const threadId = ThreadId.make("pi-thread-subagent-fixture");
 
     yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
@@ -340,13 +407,15 @@ it.effect("PiAdapter maps source-backed subagent tool fixtures", () =>
 
     const events = [...(yield* Fiber.join(eventsFiber))];
     const subagentStarted = events.find(
-      (event) => event.type === "item.started" && event.payload.itemType === "collab_agent_tool_call",
+      (event) =>
+        event.type === "item.started" && event.payload.itemType === "collab_agent_tool_call",
     );
     const subagentDelta = events.find(
       (event) => event.type === "content.delta" && event.payload.streamKind === "command_output",
     );
     const subagentCompleted = events.find(
-      (event) => event.type === "item.completed" && event.payload.itemType === "collab_agent_tool_call",
+      (event) =>
+        event.type === "item.completed" && event.payload.itemType === "collab_agent_tool_call",
     );
     assert.ok(subagentStarted?.itemId);
     assert.equal(subagentDelta?.payload.delta, "reviewer: looks good");
@@ -369,7 +438,9 @@ it.effect("PiAdapter maps unexpected process exit to session.exited", () =>
       });
     `);
     const adapter = yield* makePiAdapter(makeSettings(binaryPath));
-    const exitedFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 4)).pipe(Effect.forkChild);
+    const exitedFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 4)).pipe(
+      Effect.forkChild,
+    );
     const threadId = ThreadId.make("pi-thread-process-exit");
 
     yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });

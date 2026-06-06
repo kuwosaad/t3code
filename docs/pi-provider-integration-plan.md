@@ -164,12 +164,15 @@ Create `apps/server/src/provider/Layers/PiAdapter.ts`.
 Adapter state:
 
 ```ts
-Map<ThreadId, {
-  client: PiJsonlRpcClient;
-  session: ProviderSession;
-  activeTurnId?: TurnId;
-  events: Queue<ProviderRuntimeEvent>;
-}>
+Map<
+  ThreadId,
+  {
+    client: PiJsonlRpcClient;
+    session: ProviderSession;
+    activeTurnId?: TurnId;
+    events: Queue<ProviderRuntimeEvent>;
+  }
+>;
 ```
 
 Methods:
@@ -218,26 +221,26 @@ Methods:
 
 Map Pi RPC and agent events to existing T3 events:
 
-| Pi event | T3 event |
-|---|---|
-| process started | `session.started` |
-| `get_state` success | `session.configured` |
-| `agent_start` or `turn_start` | `session.state.changed: running`, `turn.started` |
-| `message_start` assistant | `item.started` with `assistant_message` |
-| `message_update` assistant delta | `content.delta` with `assistant_text` |
-| `message_end` assistant | `item.completed` |
-| `tool_execution_start` for bash | `item.started` with `command_execution` |
-| `tool_execution_update` | `content.delta` with `command_output` |
-| `tool_execution_end` | `item.completed` |
-| `tool_call` read/write/edit/bash | matching tool lifecycle item when possible, otherwise `dynamic_tool_call` |
-| `tool_result` | `content.delta` or `item.completed` |
-| `compaction_start` | `item.started` with `context_compaction` |
-| `compaction_end` | `item.completed` |
-| `turn_end` or `agent_end` | `turn.completed`, `session.state.changed: ready` |
-| `extension_ui_request` confirm/select/input/editor | `request.opened` or `user-input.requested` |
-| `extension_error` | `runtime.error` |
-| JSON parse error | `runtime.warning` |
-| process exit nonzero | `session.exited` with `exitKind: error` and `runtime.error` |
+| Pi event                                           | T3 event                                                                  |
+| -------------------------------------------------- | ------------------------------------------------------------------------- |
+| process started                                    | `session.started`                                                         |
+| `get_state` success                                | `session.configured`                                                      |
+| `agent_start` or `turn_start`                      | `session.state.changed: running`, `turn.started`                          |
+| `message_start` assistant                          | `item.started` with `assistant_message`                                   |
+| `message_update` assistant delta                   | `content.delta` with `assistant_text`                                     |
+| `message_end` assistant                            | `item.completed`                                                          |
+| `tool_execution_start` for bash                    | `item.started` with `command_execution`                                   |
+| `tool_execution_update`                            | `content.delta` with `command_output`                                     |
+| `tool_execution_end`                               | `item.completed`                                                          |
+| `tool_call` read/write/edit/bash                   | matching tool lifecycle item when possible, otherwise `dynamic_tool_call` |
+| `tool_result`                                      | `content.delta` or `item.completed`                                       |
+| `compaction_start`                                 | `item.started` with `context_compaction`                                  |
+| `compaction_end`                                   | `item.completed`                                                          |
+| `turn_end` or `agent_end`                          | `turn.completed`, `session.state.changed: ready`                          |
+| `extension_ui_request` confirm/select/input/editor | `request.opened` or `user-input.requested`                                |
+| `extension_error`                                  | `runtime.error`                                                           |
+| JSON parse error                                   | `runtime.warning`                                                         |
+| process exit nonzero                               | `session.exited` with `exitKind: error` and `runtime.error`               |
 
 Every mapped event must include:
 
@@ -313,13 +316,7 @@ export type BuiltInDriversEnv =
   | OpenCodeDriverEnv
   | PiDriverEnv;
 
-export const BUILT_IN_DRIVERS = [
-  CodexDriver,
-  ClaudeDriver,
-  CursorDriver,
-  OpenCodeDriver,
-  PiDriver,
-];
+export const BUILT_IN_DRIVERS = [CodexDriver, ClaudeDriver, CursorDriver, OpenCodeDriver, PiDriver];
 ```
 
 ## Pi text generation
@@ -467,18 +464,18 @@ Exit criteria:
 
 ## Breakage risks and mitigations
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| Pi missing from PATH | T3 server could crash if not handled | Probe returns unavailable snapshot, no throw |
-| Bad Pi JSON line | Runtime crash | Parse per line with try/catch and emit warning |
-| Pi event payload changes | UI renders wrong events | Keep raw event attached and test known mappings |
-| Request without response | Thread hangs | Per-request timeout and pending rejection on exit |
-| Abort race | Turn remains running in UI | Emit local aborted event after successful `abort` response |
-| Child process leak | CPU/memory leak | Scope finalizer kills process and tests verify stop |
-| Existing settings decode break | Users cannot start T3 | All Pi fields decoding-default optional |
-| Existing provider regression | Codex/Claude broken | Run full `bun run test`, not Pi-only tests |
-| Shell injection via launch args | Security issue | Never shell-concatenate args; parse or remove launchArgs |
-| Titan or skill prompts block | User stuck | Map `extension_ui_request` in phase 2 before calling feature complete |
+| Risk                            | Impact                               | Mitigation                                                            |
+| ------------------------------- | ------------------------------------ | --------------------------------------------------------------------- |
+| Pi missing from PATH            | T3 server could crash if not handled | Probe returns unavailable snapshot, no throw                          |
+| Bad Pi JSON line                | Runtime crash                        | Parse per line with try/catch and emit warning                        |
+| Pi event payload changes        | UI renders wrong events              | Keep raw event attached and test known mappings                       |
+| Request without response        | Thread hangs                         | Per-request timeout and pending rejection on exit                     |
+| Abort race                      | Turn remains running in UI           | Emit local aborted event after successful `abort` response            |
+| Child process leak              | CPU/memory leak                      | Scope finalizer kills process and tests verify stop                   |
+| Existing settings decode break  | Users cannot start T3                | All Pi fields decoding-default optional                               |
+| Existing provider regression    | Codex/Claude broken                  | Run full `bun run test`, not Pi-only tests                            |
+| Shell injection via launch args | Security issue                       | Never shell-concatenate args; parse or remove launchArgs              |
+| Titan or skill prompts block    | User stuck                           | Map `extension_ui_request` in phase 2 before calling feature complete |
 
 ## What already exists and should be reused
 

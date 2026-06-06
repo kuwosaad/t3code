@@ -251,7 +251,7 @@ Actual RPC response:
 Current code checks:
 
 ```ts
-Array.isArray(response.data)
+Array.isArray(response.data);
 ```
 
 Fix:
@@ -275,17 +275,17 @@ extension_ui_request method=notify
 
 Required mapping:
 
-| Pi method | T3 behavior |
-|---|---|
-| `confirm` | `request.opened` |
-| `select` | `user-input.requested` |
-| `input` | `user-input.requested` |
-| `editor` | `user-input.requested` with multi-line behavior if supported |
-| `notify` | runtime warning/info or toast-shaped event if available |
-| `setWidget` | ignore or map to non-blocking provider status |
-| `setStatus` | ignore or map to non-blocking provider status |
-| `setTitle` | thread metadata update if clean |
-| `set_editor_text` | ignore in phase 1 |
+| Pi method         | T3 behavior                                                  |
+| ----------------- | ------------------------------------------------------------ |
+| `confirm`         | `request.opened`                                             |
+| `select`          | `user-input.requested`                                       |
+| `input`           | `user-input.requested`                                       |
+| `editor`          | `user-input.requested` with multi-line behavior if supported |
+| `notify`          | runtime warning/info or toast-shaped event if available      |
+| `setWidget`       | ignore or map to non-blocking provider status                |
+| `setStatus`       | ignore or map to non-blocking provider status                |
+| `setTitle`        | thread metadata update if clean                              |
+| `set_editor_text` | ignore in phase 1                                            |
 
 ### B5. Prompt failure can leave the UI stuck
 
@@ -701,16 +701,16 @@ Titan memory is available through Pi. Ask Pi what it remembers, or ask it to sea
 
 ## Risks
 
-| Risk | User-visible failure | Mitigation |
-|---|---|---|
-| Pi missing from PATH | provider setup crashes or vanishes | unavailable provider snapshot |
-| Pi emits unexpected JSON | T3 server crashes | parse per line and emit warning |
-| Prompt preflight fails | UI stuck running | finalize failed turn immediately |
-| Tool ids are unstable | timeline cards fragment | use Pi `toolCallId` when present |
-| Extension notify becomes prompt | user sees bogus questions | map notify/setWidget separately |
-| Child process leak | CPU/memory leak | scope finalizer and stop tests |
-| Model response shape changes | empty model list | fixture tests around RPC response |
-| Existing providers regress | T3 users lose Codex/Claude/OpenCode | full test suite before merge |
+| Risk                            | User-visible failure                | Mitigation                        |
+| ------------------------------- | ----------------------------------- | --------------------------------- |
+| Pi missing from PATH            | provider setup crashes or vanishes  | unavailable provider snapshot     |
+| Pi emits unexpected JSON        | T3 server crashes                   | parse per line and emit warning   |
+| Prompt preflight fails          | UI stuck running                    | finalize failed turn immediately  |
+| Tool ids are unstable           | timeline cards fragment             | use Pi `toolCallId` when present  |
+| Extension notify becomes prompt | user sees bogus questions           | map notify/setWidget separately   |
+| Child process leak              | CPU/memory leak                     | scope finalizer and stop tests    |
+| Model response shape changes    | empty model list                    | fixture tests around RPC response |
+| Existing providers regress      | T3 users lose Codex/Claude/OpenCode | full test suite before merge      |
 
 ## Final Done Definition
 

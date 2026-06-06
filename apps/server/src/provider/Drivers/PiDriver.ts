@@ -80,8 +80,11 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         getSettings: Effect.succeed(effectiveConfig),
         streamSettings: Stream.never,
         haveSettingsChanged: () => false,
-        initialSnapshot: (settings) => makePendingPiProvider(settings).pipe(Effect.map(stampIdentity)),
-        checkProvider: checkPiProviderStatus(effectiveConfig, processEnv).pipe(Effect.map(stampIdentity)),
+        initialSnapshot: (settings) =>
+          makePendingPiProvider(settings).pipe(Effect.map(stampIdentity)),
+        checkProvider: checkPiProviderStatus(effectiveConfig, processEnv).pipe(
+          Effect.map(stampIdentity),
+        ),
         refreshInterval: SNAPSHOT_REFRESH_INTERVAL,
       }).pipe(
         Effect.mapError(

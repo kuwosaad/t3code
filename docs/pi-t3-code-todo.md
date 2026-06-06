@@ -60,13 +60,13 @@ Make Pi available inside T3 Code as a provider, while keeping Pi as the runtime 
 
 ### PR 5 — Polish + docs
 
-- [ ] Write `docs/providers/pi.md`
-- [ ] Add install/setup guidance
-- [ ] Add troubleshooting for missing `pi` binary
-- [ ] Add troubleshooting for model probe failures
-- [ ] Add first-run example prompts
-- [ ] Add Pi smoke-test checklist to docs
-- [ ] Improve any rough UI copy
+- [x] Write `docs/providers/pi.md`
+- [x] Add install/setup guidance
+- [x] Add troubleshooting for missing `pi` binary
+- [x] Add troubleshooting for model probe failures
+- [x] Add first-run example prompts
+- [x] Add Pi smoke-test checklist to docs
+- [x] Improve any rough UI copy
 
 ## Manual smoke test before merging broadly
 

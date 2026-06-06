@@ -19,13 +19,17 @@ import { runPiPrint } from "../provider/pi/PiSystem.ts";
 
 const PI_TEXT_GENERATION_TIMEOUT_MS = 60_000;
 
-function piEnvFromSettings(settings: PiSettings, environment: NodeJS.ProcessEnv): Record<string, string> {
+function piEnvFromSettings(
+  settings: PiSettings,
+  environment: NodeJS.ProcessEnv,
+): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(environment)) {
     if (value !== undefined) env[key] = value;
   }
   if (settings.configDir.trim().length > 0) env.PI_CODING_AGENT_DIR = settings.configDir.trim();
-  if (settings.sessionDir.trim().length > 0) env.PI_CODING_AGENT_SESSION_DIR = settings.sessionDir.trim();
+  if (settings.sessionDir.trim().length > 0)
+    env.PI_CODING_AGENT_SESSION_DIR = settings.sessionDir.trim();
   return env;
 }
 
@@ -90,7 +94,9 @@ export function makePiTextGeneration(
       ).pipe(
         Effect.map((text) => {
           const parsed = parseJsonObject<{ subject: string; body: string; branch: string }>(text);
-          const subject = sanitizeCommitSubject(parsed.subject ?? text.split("\n")[0] ?? "Update code");
+          const subject = sanitizeCommitSubject(
+            parsed.subject ?? text.split("\n")[0] ?? "Update code",
+          );
           const body = typeof parsed.body === "string" ? parsed.body.trim() : "";
           const branch =
             input.includeBranch && typeof parsed.branch === "string"
