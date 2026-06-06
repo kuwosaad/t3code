@@ -43,16 +43,16 @@ Make Pi available inside T3 Code as a provider, while keeping Pi as the runtime 
 - [x] Render Titan calls as MCP/tool cards
 - [x] Add fixture-based mapping tests
 - [ ] Capture live Pi JSONL fixtures from a real model run
-- [ ] Render file edits as file change cards with fixture coverage
-- [ ] Render subagent calls as collaboration agent cards with fixture coverage
+- [x] Render file edits as file change cards with fixture coverage
+- [x] Render subagent calls as collaboration agent cards with fixture coverage
 
 ### PR 4 — Approvals, inputs, skills, commands
 
-- [ ] Map Pi `confirm` to T3 approval request
-- [ ] Map Pi `select` to T3 user input request
-- [ ] Map Pi `input` to T3 user input request
-- [ ] Map Pi `editor` to T3 user input request
-- [ ] Send T3 answers back to Pi as `extension_ui_response`
+- [x] Map Pi `confirm` to T3 approval request
+- [x] Map Pi `select` to T3 user input request
+- [x] Map Pi `input` to T3 user input request
+- [x] Map Pi `editor` to T3 user input request
+- [x] Send T3 answers back to Pi as `extension_ui_response`
 - [ ] Fetch Pi `get_commands`
 - [ ] Surface Pi extension commands in T3 command UI
 - [ ] Surface Pi prompt templates in T3 command UI

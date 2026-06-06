@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { afterEach } from "vitest";
 
-import { PiSettings, ThreadId } from "@t3tools/contracts";
+import { ApprovalRequestId, PiSettings, ThreadId } from "@t3tools/contracts";
 import { makePiAdapter } from "./PiAdapter.ts";
 
 const decodePiSettings = Schema.decodeSync(PiSettings);
@@ -46,6 +46,29 @@ function makeFixturePi(fixtureName: string): string {
           process.stdout.write(fixtureLine + "\\n");
         }
         process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: {} }) + "\\n");
+      }
+    });
+  `);
+}
+
+function makeExtensionRequestPi(request: Record<string, unknown>): string {
+  return makeFakePi(`
+    import readline from "node:readline";
+    const request = ${JSON.stringify(request)};
+    const rl = readline.createInterface({ input: process.stdin });
+    rl.on("line", (line) => {
+      const command = JSON.parse(line);
+      if (command.type === "get_state") {
+        process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: { sessionId: "s1", isStreaming: false } }) + "\\n");
+        return;
+      }
+      if (command.type === "prompt") {
+        process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: {} }) + "\\n");
+        process.stdout.write(JSON.stringify(request) + "\\n");
+        return;
+      }
+      if (command.type === "extension_ui_response") {
+        process.stdout.write(JSON.stringify({ type: "extension_ui_request", id: "notify-response", method: "notify", message: JSON.stringify(command), notifyType: "info" }) + "\\n");
       }
     });
   `);
@@ -102,6 +125,108 @@ it.effect("PiAdapter finalizes the turn when prompt returns success false", () =
     const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
     assert.equal(session?.status, "error");
     assert.equal(session?.lastError, "No API key found");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("PiAdapter round-trips Pi confirm requests as approval responses", () =>
+  Effect.gen(function* () {
+    const adapter = yield* makePiAdapter(makeSettings(makeExtensionRequestPi({
+      type: "extension_ui_request",
+      id: "confirm-1",
+      method: "confirm",
+      title: "Allow tool?",
+      message: "Run command",
+    })));
+    const requestFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 5)).pipe(Effect.forkChild);
+    const threadId = ThreadId.make("pi-thread-confirm-request");
+
+    yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+    yield* adapter.sendTurn({ threadId, input: "needs confirm" });
+
+    const initialEvents = [...(yield* Fiber.join(requestFiber))];
+    const opened = initialEvents.find((event) => event.type === "request.opened");
+    assert.ok(opened?.requestId);
+    assert.equal(opened.payload.detail, "Allow tool?: Run command");
+
+    const responseFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(Effect.forkChild);
+    yield* adapter.respondToRequest(threadId, ApprovalRequestId.make(String(opened.requestId)), "accept");
+    const responseEvents = [...(yield* Fiber.join(responseFiber))];
+    const resolved = responseEvents.find((event) => event.type === "request.resolved");
+    const notify = responseEvents.find((event) => event.type === "runtime.warning");
+    assert.equal(resolved?.payload.decision, "accept");
+    assert.ok(String(notify?.payload.message ?? "").includes('"confirmed":true'));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("PiAdapter round-trips Pi input requests as user input responses", () =>
+  Effect.gen(function* () {
+    const adapter = yield* makePiAdapter(makeSettings(makeExtensionRequestPi({
+      type: "extension_ui_request",
+      id: "input-1",
+      method: "input",
+      title: "Project name",
+      placeholder: "my-app",
+    })));
+    const requestFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 5)).pipe(Effect.forkChild);
+    const threadId = ThreadId.make("pi-thread-input-request");
+
+    yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+    yield* adapter.sendTurn({ threadId, input: "needs input" });
+
+    const initialEvents = [...(yield* Fiber.join(requestFiber))];
+    const requested = initialEvents.find((event) => event.type === "user-input.requested");
+    assert.ok(requested?.requestId);
+    assert.equal(requested.payload.questions[0]?.header, "Project name");
+    assert.equal(requested.payload.questions[0]?.question, "Project name");
+
+    const responseFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(Effect.forkChild);
+    yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make(String(requested.requestId)), {
+      "input-1": "titan-ui",
+    });
+    const responseEvents = [...(yield* Fiber.join(responseFiber))];
+    const resolved = responseEvents.find((event) => event.type === "user-input.resolved");
+    const notify = responseEvents.find((event) => event.type === "runtime.warning");
+    assert.deepEqual(resolved?.payload.answers, { "input-1": "titan-ui" });
+    assert.ok(String(notify?.payload.message ?? "").includes('"value":"titan-ui"'));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("PiAdapter maps Pi select and editor requests as user input", () =>
+  Effect.gen(function* () {
+    const selectAdapter = yield* makePiAdapter(makeSettings(makeExtensionRequestPi({
+      type: "extension_ui_request",
+      id: "select-1",
+      method: "select",
+      title: "Choose mode",
+      options: ["fast", "safe"],
+    })));
+    const selectFiber = yield* Stream.runCollect(Stream.take(selectAdapter.streamEvents, 5)).pipe(Effect.forkChild);
+    const selectThreadId = ThreadId.make("pi-thread-select-request");
+    yield* selectAdapter.startSession({ threadId: selectThreadId, cwd: process.cwd(), runtimeMode: "full-access" });
+    yield* selectAdapter.sendTurn({ threadId: selectThreadId, input: "needs select" });
+    const selectEvents = [...(yield* Fiber.join(selectFiber))];
+    const selectRequested = selectEvents.find((event) => event.type === "user-input.requested");
+    assert.equal(selectRequested?.payload.questions[0]?.multiSelect, false);
+    assert.deepEqual(selectRequested?.payload.questions[0]?.options, [
+      { label: "fast", description: "fast" },
+      { label: "safe", description: "safe" },
+    ]);
+
+    const editorAdapter = yield* makePiAdapter(makeSettings(makeExtensionRequestPi({
+      type: "extension_ui_request",
+      id: "editor-1",
+      method: "editor",
+      title: "Edit instructions",
+      prefill: "initial text",
+    })));
+    const editorFiber = yield* Stream.runCollect(Stream.take(editorAdapter.streamEvents, 5)).pipe(Effect.forkChild);
+    const editorThreadId = ThreadId.make("pi-thread-editor-request");
+    yield* editorAdapter.startSession({ threadId: editorThreadId, cwd: process.cwd(), runtimeMode: "full-access" });
+    yield* editorAdapter.sendTurn({ threadId: editorThreadId, input: "needs editor" });
+    const editorEvents = [...(yield* Fiber.join(editorFiber))];
+    const editorRequested = editorEvents.find((event) => event.type === "user-input.requested");
+    assert.equal(editorRequested?.payload.questions[0]?.header, "Edit instructions");
+    assert.equal(editorRequested?.payload.questions[0]?.question, "Edit instructions");
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -175,6 +300,58 @@ it.effect("PiAdapter maps source-backed Titan tool fixtures", () =>
     assert.ok(titanStarted?.itemId);
     assert.equal(titanDelta?.payload.delta, "found 2 memories");
     assert.equal(titanDelta?.itemId, titanStarted.itemId);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("PiAdapter maps source-backed file edit tool fixtures", () =>
+  Effect.gen(function* () {
+    const adapter = yield* makePiAdapter(makeSettings(makeFixturePi("pi-file-edit-turn.jsonl")));
+    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 14)).pipe(Effect.forkChild);
+    const threadId = ThreadId.make("pi-thread-file-edit-fixture");
+
+    yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+    yield* adapter.sendTurn({ threadId, input: "edit file" });
+
+    const events = [...(yield* Fiber.join(eventsFiber))];
+    const editStarted = events.find(
+      (event) => event.type === "item.started" && event.payload.itemType === "file_change",
+    );
+    const editDelta = events.find(
+      (event) => event.type === "content.delta" && event.payload.streamKind === "command_output",
+    );
+    const editCompleted = events.find(
+      (event) => event.type === "item.completed" && event.payload.itemType === "file_change",
+    );
+    assert.ok(editStarted?.itemId);
+    assert.equal(editDelta?.payload.delta, "Updated README.md");
+    assert.equal(editDelta?.itemId, editStarted.itemId);
+    assert.equal(editCompleted?.itemId, editStarted.itemId);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("PiAdapter maps source-backed subagent tool fixtures", () =>
+  Effect.gen(function* () {
+    const adapter = yield* makePiAdapter(makeSettings(makeFixturePi("pi-subagent-turn.jsonl")));
+    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 14)).pipe(Effect.forkChild);
+    const threadId = ThreadId.make("pi-thread-subagent-fixture");
+
+    yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+    yield* adapter.sendTurn({ threadId, input: "ask subagent" });
+
+    const events = [...(yield* Fiber.join(eventsFiber))];
+    const subagentStarted = events.find(
+      (event) => event.type === "item.started" && event.payload.itemType === "collab_agent_tool_call",
+    );
+    const subagentDelta = events.find(
+      (event) => event.type === "content.delta" && event.payload.streamKind === "command_output",
+    );
+    const subagentCompleted = events.find(
+      (event) => event.type === "item.completed" && event.payload.itemType === "collab_agent_tool_call",
+    );
+    assert.ok(subagentStarted?.itemId);
+    assert.equal(subagentDelta?.payload.delta, "reviewer: looks good");
+    assert.equal(subagentDelta?.itemId, subagentStarted.itemId);
+    assert.equal(subagentCompleted?.itemId, subagentStarted.itemId);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
