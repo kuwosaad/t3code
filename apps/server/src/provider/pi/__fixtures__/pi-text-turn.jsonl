@@ -1,0 +1,8 @@
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_start","message":{"role":"assistant","content":[],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"stop","timestamp":1780000000000}}
+{"type":"message_update","message":{"role":"assistant","content":[{"type":"text","text":"hello"}],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"stop","timestamp":1780000000000},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"hello","partial":{"role":"assistant","content":[{"type":"text","text":"hello"}],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"stop","timestamp":1780000000000}}}
+{"type":"message_update","message":{"role":"assistant","content":[{"type":"text","text":"hello world"}],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"stop","timestamp":1780000000000},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":" world","partial":{"role":"assistant","content":[{"type":"text","text":"hello world"}],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"stop","timestamp":1780000000000}}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"hello world"}],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"stop","timestamp":1780000000000}}
+{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"hello world"}],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"stop","timestamp":1780000000000},"toolResults":[]}
+{"type":"agent_end","messages":[]}

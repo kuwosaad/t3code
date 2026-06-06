@@ -1,0 +1,10 @@
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_start","message":{"role":"assistant","content":[],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"toolUse","timestamp":1780000000000}}
+{"type":"message_update","message":{"role":"assistant","content":[{"type":"text","text":"I will check Titan memory."}],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"toolUse","timestamp":1780000000000},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"I will check Titan memory.","partial":{"role":"assistant","content":[{"type":"text","text":"I will check Titan memory."}],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"toolUse","timestamp":1780000000000}}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"I will check Titan memory."},{"type":"toolCall","id":"call_titan_1","name":"titan_query_memories","arguments":{"query":"T3 Code Pi integration"}}],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"toolUse","timestamp":1780000000000}}
+{"type":"tool_execution_start","toolCallId":"call_titan_1","toolName":"titan_query_memories","args":{"query":"T3 Code Pi integration"}}
+{"type":"tool_execution_update","toolCallId":"call_titan_1","toolName":"titan_query_memories","args":{"query":"T3 Code Pi integration"},"partialResult":{"content":[{"type":"text","text":"found 2 memories"}],"details":{"count":2}}}
+{"type":"tool_execution_end","toolCallId":"call_titan_1","toolName":"titan_query_memories","result":{"content":[{"type":"text","text":"found 2 memories"}],"details":{"count":2}},"isError":false}
+{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"I will check Titan memory."}],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"toolUse","timestamp":1780000000000},"toolResults":[]}
+{"type":"agent_end","messages":[]}

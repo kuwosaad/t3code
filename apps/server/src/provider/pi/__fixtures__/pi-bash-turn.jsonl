@@ -1,0 +1,10 @@
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_start","message":{"role":"assistant","content":[],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"toolUse","timestamp":1780000000000}}
+{"type":"message_update","message":{"role":"assistant","content":[{"type":"text","text":"I will run a command."}],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"toolUse","timestamp":1780000000000},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"I will run a command.","partial":{"role":"assistant","content":[{"type":"text","text":"I will run a command."}],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"toolUse","timestamp":1780000000000}}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"I will run a command."},{"type":"toolCall","id":"call_bash_1","name":"bash","arguments":{"command":"printf ok"}}],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"toolUse","timestamp":1780000000000}}
+{"type":"tool_execution_start","toolCallId":"call_bash_1","toolName":"bash","args":{"command":"printf ok"}}
+{"type":"tool_execution_update","toolCallId":"call_bash_1","toolName":"bash","args":{"command":"printf ok"},"partialResult":{"content":[{"type":"text","text":"ok"}],"details":{"stdout":"ok","stderr":"","exitCode":0}}}
+{"type":"tool_execution_end","toolCallId":"call_bash_1","toolName":"bash","result":{"content":[{"type":"text","text":"ok"}],"details":{"stdout":"ok","stderr":"","exitCode":0}},"isError":false}
+{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"I will run a command."}],"provider":"anthropic","model":"claude-sonnet-4","stopReason":"toolUse","timestamp":1780000000000},"toolResults":[]}
+{"type":"agent_end","messages":[]}

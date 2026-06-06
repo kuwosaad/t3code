@@ -82,9 +82,14 @@ function piEnvFromSettings(settings: PiSettings, environment: NodeJS.ProcessEnv)
 }
 
 function textFromRecord(value: Record<string, unknown>): string {
-  for (const key of ["text", "delta", "content", "message", "output", "stdout", "stderr"] as const) {
+  for (const key of ["assistantMessageEvent", "partialResult", "result"] as const) {
+    if (value[key] && typeof value[key] === "object") return textFromRecord(value[key] as Record<string, unknown>);
+  }
+
+  for (const key of ["text", "delta", "output", "stdout", "stderr"] as const) {
     if (typeof value[key] === "string") return value[key] as string;
   }
+
   if (Array.isArray(value.content)) return (value.content as any[]).map(textFromUnknown).join("");
   if (value.message && typeof value.message === "object") return textFromRecord(value.message as Record<string, unknown>);
   return "";
