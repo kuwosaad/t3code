@@ -3,6 +3,7 @@ import {
   type PiSettings,
   ProviderDriverKind,
   type ServerProviderModel,
+  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
@@ -50,6 +51,10 @@ function modelSlug(modelId: string): string {
   return modelId.includes("/") ? `pi/${modelId}` : modelId;
 }
 
+function nonEmptyProbeString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
 function modelName(modelId: string): string {
   // Extract a display name from the model slug
   const parts = modelId.split("/");
@@ -87,12 +92,44 @@ function modelsFromPi(input: {
   );
 }
 
-// ───── model probing ───────────────────────────────────────────────────────
+// ───── model / command probing ─────────────────────────────────────────────
 
-async function probePiModels(
+type PiCommandInfo = {
+  readonly name?: unknown;
+  readonly description?: unknown;
+  readonly source?: unknown;
+};
+
+type PiRuntimeProbe = {
+  readonly models: ReadonlyArray<PiModelInfo>;
+  readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+};
+
+function parsePiCommands(commands: unknown): ReadonlyArray<ServerProviderSlashCommand> {
+  if (!Array.isArray(commands)) return [];
+  const byName = new Map<string, ServerProviderSlashCommand>();
+
+  for (const raw of commands) {
+    if (!raw || typeof raw !== "object") continue;
+    const command = raw as PiCommandInfo;
+    const name = nonEmptyProbeString(command.name);
+    if (!name) continue;
+    const description = nonEmptyProbeString(command.description);
+    const key = name.toLowerCase();
+    if (byName.has(key)) continue;
+    byName.set(key, {
+      name,
+      ...(description ? { description } : {}),
+    });
+  }
+
+  return [...byName.values()];
+}
+
+async function probePiRuntime(
   settings: PiSettings,
   env: Record<string, string>,
-): Promise<ReadonlyArray<PiModelInfo>> {
+): Promise<PiRuntimeProbe> {
   const client = new PiJsonlRpcClient({
     binaryPath: settings.binaryPath,
     cwd: process.cwd(),
@@ -102,10 +139,19 @@ async function probePiModels(
   try {
     await client.start();
     const response = await client.request<{ models?: ReadonlyArray<PiModelInfo> }>({ type: "get_available_models" } as any);
-    if (response.success && response.data && Array.isArray(response.data.models)) {
-      return response.data.models;
+    const models = response.success && response.data && Array.isArray(response.data.models)
+      ? response.data.models
+      : [];
+
+    let slashCommands: ReadonlyArray<ServerProviderSlashCommand> = [];
+    try {
+      const commandResponse = await client.request<{ commands?: unknown }>({ type: "get_commands" } as any);
+      slashCommands = commandResponse.success ? parsePiCommands(commandResponse.data?.commands) : [];
+    } catch {
+      slashCommands = [];
     }
-    return [];
+
+    return { models, slashCommands };
   } finally {
     await client.stop();
   }
@@ -172,6 +218,7 @@ export function checkPiProviderStatus(
 
     // ── model probe ──
     let liveModels: ReadonlyArray<PiModelInfo> = [];
+    let slashCommands: ReadonlyArray<ServerProviderSlashCommand> = [];
     let probeMessage: string | undefined;
     let status: "ready" | "warning" | "error" | "disabled" = "ready";
     let auth: { status: "authenticated" | "unauthenticated" | "unknown"; type?: string } = {
@@ -180,7 +227,7 @@ export function checkPiProviderStatus(
     };
 
     const modelExit = yield* Effect.tryPromise({
-      try: () => probePiModels(settings, env),
+      try: () => probePiRuntime(settings, env),
       catch: (cause) =>
         new PiProbeError({
           detail: cause instanceof Error ? cause.message : String(cause),
@@ -193,7 +240,8 @@ export function checkPiProviderStatus(
       auth = { status: "unknown", type: "cli" };
       probeMessage = `Pi CLI is installed, but model probing failed: ${detail}`;
     } else {
-      liveModels = modelExit.value;
+      liveModels = modelExit.value.models;
+      slashCommands = modelExit.value.slashCommands;
     }
 
     return buildServerProvider({
@@ -201,6 +249,7 @@ export function checkPiProviderStatus(
       enabled: settings.enabled,
       checkedAt,
       models: modelsFromPi({ settings, liveModels }),
+      slashCommands,
       probe: {
         installed: true,
         version,
