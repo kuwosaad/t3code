@@ -59,10 +59,11 @@ docs/pi-provider-integration-plan.md
 - `get_commands` works and returns extension commands, prompt templates, and skills.
 - `get_available_models` works, but returns `data.models`, not a direct array.
 - Pi emits startup extension UI events like `setWidget` and `notify`.
-- `bun --filter t3 typecheck` passes.
-- `bun lint` exits 0 with existing warnings.
-- `cd apps/server && bun run test ProviderRegistry` passes: 39 tests.
-- root `bun typecheck` currently fails because a web fixture manually lists providers and omits `providers.pi`.
+- Targeted server, contracts, and web typechecks pass with the bundled Node 24.19 runtime.
+- Targeted PI lint passes with no findings.
+- The focused provider/settings suite passes: 6 files, 105 tests.
+- The PI suite passes from both the repository root and `apps/server`: 19 tests in each run.
+- A live PI RPC smoke check confirms state and command discovery; offline model discovery returns an empty list by design.
 
 ## Scope Decision
 

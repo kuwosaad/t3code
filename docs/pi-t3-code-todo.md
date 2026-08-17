@@ -27,8 +27,8 @@ Make Pi available inside T3 Code as a provider, while keeping Pi as the runtime 
 - [x] Add stable assistant message item IDs
 - [x] Add stable tool item IDs
 - [x] Add `PiAdapter` lifecycle/streaming tests
-- [x] Verify root `bun typecheck`
-- [x] Verify `bun lint` passes with existing warnings only
+- [x] Verify focused server, contracts, and web typechecks
+- [x] Verify targeted PI lint
 - [x] Verify focused server/web/contracts tests
 
 ## Left to build
