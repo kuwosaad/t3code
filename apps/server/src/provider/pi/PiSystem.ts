@@ -2,18 +2,18 @@
 // and text generation. Effect's ChildProcess API is designed for managed
 // lifetimes; the stateless `pi --version` and `pi --print` invocations are
 // simpler as plain execFile calls.
-import { execFile, type ExecFileException } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 
 /**
  * Run `pi --version` and return the trimmed stdout.
  */
 export function runPiVersion(binaryPath: string, env: NodeJS.ProcessEnv): Promise<string> {
   return new Promise<string>((resolve, reject) => {
-    execFile(
+    NodeChildProcess.execFile(
       binaryPath,
       ["--version"],
       { env },
-      (error: ExecFileException | null, stdout: string) => {
+      (error: NodeChildProcess.ExecFileException | null, stdout: string) => {
         if (error) reject(error);
         else resolve(stdout.trim());
       },
@@ -33,7 +33,7 @@ export function runPiPrint(input: {
   timeoutMs: number;
 }): Promise<string> {
   return new Promise<string>((resolve, reject) => {
-    const child = execFile(
+    const child = NodeChildProcess.execFile(
       input.binaryPath,
       [...input.args, input.prompt],
       {
@@ -42,7 +42,7 @@ export function runPiPrint(input: {
         timeout: input.timeoutMs,
         maxBuffer: 1024 * 1024,
       },
-      (error: ExecFileException | null, stdout: string, stderr: string) => {
+      (error: NodeChildProcess.ExecFileException | null, stdout: string, stderr: string) => {
         if (error) {
           reject(new Error(stderr.trim() || error.message));
           return;

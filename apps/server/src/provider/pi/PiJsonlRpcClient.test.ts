@@ -1,28 +1,29 @@
 // @ts-nocheck — These tests create small executable fixtures with Node built-ins
 // to exercise the plain-Node PiJsonlRpcClient process boundary.
-import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeAssert from "node:assert/strict";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import { afterEach, describe, it } from "vitest";
 
 import { PiJsonlRpcClient, PiRpcClientError } from "./PiJsonlRpcClient.ts";
 
+const assert = NodeAssert;
 const tempDirs: string[] = [];
 
 function makeFakePi(source: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "t3-pi-rpc-test-"));
+  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pi-rpc-test-"));
   tempDirs.push(dir);
-  const binary = join(dir, "fake-pi.mjs");
-  writeFileSync(binary, `#!/usr/bin/env node\n${source}`);
-  chmodSync(binary, 0o755);
+  const binary = NodePath.join(dir, "fake-pi.mjs");
+  NodeFS.writeFileSync(binary, `#!/usr/bin/env node\n${source}`);
+  NodeFS.chmodSync(binary, 0o755);
   return binary;
 }
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
+    NodeFS.rmSync(dir, { recursive: true, force: true });
   }
 });
 

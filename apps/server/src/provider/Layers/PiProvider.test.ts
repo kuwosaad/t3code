@@ -1,8 +1,8 @@
 // @ts-nocheck — Test fixtures create executable fake Pi binaries with Node built-ins.
-import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeAssert from "node:assert/strict";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -12,15 +12,16 @@ import { afterEach } from "vitest";
 import { PiSettings } from "@t3tools/contracts";
 import { checkPiProviderStatus } from "./PiProvider.ts";
 
+const assert = NodeAssert;
 const decodePiSettings = Schema.decodeSync(PiSettings);
 const tempDirs: string[] = [];
 
 function makeFakePi(source: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "t3-pi-provider-test-"));
+  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pi-provider-test-"));
   tempDirs.push(dir);
-  const binary = join(dir, "fake-pi.mjs");
-  writeFileSync(binary, `#!/usr/bin/env node\n${source}`);
-  chmodSync(binary, 0o755);
+  const binary = NodePath.join(dir, "fake-pi.mjs");
+  NodeFS.writeFileSync(binary, `#!/usr/bin/env node\n${source}`);
+  NodeFS.chmodSync(binary, 0o755);
   return binary;
 }
 
@@ -39,7 +40,7 @@ function makeSettings(binaryPath: string): PiSettings {
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
+    NodeFS.rmSync(dir, { recursive: true, force: true });
   }
 });
 

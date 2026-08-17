@@ -1,7 +1,6 @@
 import {
   type ModelCapabilities,
   type PiSettings,
-  ProviderDriverKind,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
@@ -19,8 +18,6 @@ import {
 import { PiJsonlRpcClient } from "../pi/PiJsonlRpcClient.ts";
 import { runPiVersion } from "../pi/PiSystem.ts";
 import type { PiModelInfo } from "../pi/PiRpcTypes.ts";
-
-const PROVIDER = ProviderDriverKind.make("pi");
 
 class PiProbeError extends Data.TaggedError("PiProbeError")<{
   readonly detail: string;
@@ -98,7 +95,7 @@ function modelsFromPi(input: {
     ),
   ];
 
-  return providerModelsFromSettings(builtIn, PROVIDER, input.settings.customModels, capabilities);
+  return providerModelsFromSettings(builtIn, input.settings.customModels, capabilities);
 }
 
 // ───── model / command probing ─────────────────────────────────────────────

@@ -4,9 +4,9 @@
 // a long-lived JSONL protocol session via those would be far more complex.
 // The OpenCode provider similarly delegates process management to its runtime
 // layer. For Pi, we keep the RPC client as a self-contained plain-Node class.
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createInterface } from "node:readline";
-import { randomUUID } from "node:crypto";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeReadline from "node:readline";
+import * as NodeCrypto from "node:crypto";
 
 import type { PiRpcCommand, PiRpcEvent, PiRpcResponse } from "./PiRpcTypes.ts";
 import { isPiRpcResponse } from "./PiRpcTypes.ts";
@@ -41,7 +41,7 @@ export type PiRpcEventListener = (event: PiRpcEvent) => void;
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 
 export class PiJsonlRpcClient {
-  private child: ChildProcessWithoutNullStreams | null = null;
+  private child: NodeChildProcess.ChildProcessWithoutNullStreams | null = null;
   private stderr = "";
   private readonly pending = new Map<string, PendingRequest>();
   private readonly listeners = new Set<PiRpcEventListener>();
@@ -64,18 +64,22 @@ export class PiJsonlRpcClient {
   start(): Promise<void> {
     if (this.child !== null) return Promise.resolve();
 
-    const child = spawn(this.options.binaryPath, ["--mode", "rpc", ...(this.options.args ?? [])], {
-      cwd: this.options.cwd,
-      env: this.options.env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const child = NodeChildProcess.spawn(
+      this.options.binaryPath,
+      ["--mode", "rpc", ...(this.options.args ?? [])],
+      {
+        cwd: this.options.cwd,
+        env: this.options.env,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
     this.child = child;
 
     child.stderr.on("data", (chunk: Buffer) => {
       this.stderr += chunk.toString("utf8");
     });
 
-    const stdout = createInterface({ input: child.stdout });
+    const stdout = NodeReadline.createInterface({ input: child.stdout });
     stdout.on("line", (line) => this.handleLine(line));
 
     child.on("error", (error) => {
@@ -136,7 +140,7 @@ export class PiJsonlRpcClient {
   }
 
   async request<T = unknown>(command: Omit<PiRpcCommand, "id">): Promise<PiRpcResponse<T>> {
-    const id = randomUUID();
+    const id = NodeCrypto.randomUUID();
     const child = this.child;
     if (child === null || !child.stdin.writable) {
       throw new PiRpcClientError("Pi process is not running.");

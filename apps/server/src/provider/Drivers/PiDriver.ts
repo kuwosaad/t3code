@@ -5,6 +5,8 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { makePiTextGeneration } from "../../textGeneration/PiTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makePiAdapter } from "../Layers/PiAdapter.ts";
@@ -24,7 +26,7 @@ const decodePiSettings = Schema.decodeSync(PiSettings);
 const DRIVER_KIND = ProviderDriverKind.make("pi");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
 
-export type PiDriverEnv = Crypto.Crypto;
+export type PiDriverEnv = BackgroundPolicy.BackgroundPolicy | Crypto.Crypto | ServerSettingsService;
 
 const withInstanceIdentity =
   (input: {

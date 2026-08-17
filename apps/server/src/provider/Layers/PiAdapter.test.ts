@@ -1,8 +1,9 @@
 // @ts-nocheck — Test fixtures create executable fake Pi binaries with Node built-ins.
-import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeAssert from "node:assert/strict";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -15,23 +16,27 @@ import { afterEach } from "vitest";
 import { ApprovalRequestId, PiSettings, ThreadId } from "@t3tools/contracts";
 import { makePiAdapter } from "./PiAdapter.ts";
 
+const assert = NodeAssert;
+const join = NodePath.join;
+const rmSync = NodeFS.rmSync;
 const decodePiSettings = Schema.decodeSync(PiSettings);
 const tempDirs: string[] = [];
+const FIXTURES_DIR = NodePath.join(
+  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
+  "../pi/__fixtures__",
+);
 
 function makeFakePi(source: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "t3-pi-adapter-test-"));
+  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pi-adapter-test-"));
   tempDirs.push(dir);
   const binary = join(dir, "fake-pi.mjs");
-  writeFileSync(binary, `#!/usr/bin/env node\n${source}`);
-  chmodSync(binary, 0o755);
+  NodeFS.writeFileSync(binary, `#!/usr/bin/env node\n${source}`);
+  NodeFS.chmodSync(binary, 0o755);
   return binary;
 }
 
 function makeFixturePi(fixtureName: string): string {
-  const lines = readFileSync(
-    join(process.cwd(), "src/provider/pi/__fixtures__", fixtureName),
-    "utf8",
-  )
+  const lines = NodeFS.readFileSync(NodePath.join(FIXTURES_DIR, fixtureName), "utf8")
     .split(/\r?\n/)
     .filter((line) => line.trim().length > 0);
   return makeFakePi(`
@@ -55,10 +60,7 @@ function makeFixturePi(fixtureName: string): string {
 }
 
 function makeAckFirstFixturePi(fixtureName: string): string {
-  const lines = readFileSync(
-    join(process.cwd(), "src/provider/pi/__fixtures__", fixtureName),
-    "utf8",
-  )
+  const lines = NodeFS.readFileSync(NodePath.join(FIXTURES_DIR, fixtureName), "utf8")
     .split(/\r?\n/)
     .filter((line) => line.trim().length > 0);
   return makeFakePi(`
