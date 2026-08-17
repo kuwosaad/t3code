@@ -1,5 +1,12 @@
 # Pi in T3 Code: Merge Plan
 
+> Migration note (2026-08-18): The PI integration described here has been
+> replayed onto upstream T3 Code commit `a4cc1367b03ee0c1dc2b50fceac81ef5e63212e`.
+> The original branch remains available as `codex/pi-pre-upstream-sync-2026-08-18`.
+> The review notes below describe the pre-migration state and are retained as
+> historical context; use the current provider docs and focused checks for the
+> shipped behavior.
+
 ## Goal
 
 Make T3 Code the UI for Pi.
@@ -27,7 +34,7 @@ User
 
 ### Already built
 
-Current uncommitted work in `/Users/mohammadsaad/t3code` adds the first Pi provider skeleton:
+The migrated branch adds the PI provider integration to current upstream T3 Code:
 
 ```text
 packages/contracts/src/settings.ts
@@ -732,16 +739,16 @@ This integration is done when:
 ## Recommended Next Command Sequence
 
 ```bash
-cd /Users/mohammadsaad/t3code
+cd /Users/mohammadsaad/Documents/ChatGPT/t3\ code/pi-upstream-sync
 
 # first fix compile blockers
-bun typecheck
+pnpm exec vp run --filter t3 typecheck
 
 # after fixes
-bun lint
-cd apps/server && bun run test ProviderRegistry
-cd ../..
-bun run test
+pnpm exec vp lint --report-unused-disable-directives apps/server/src/provider
+pnpm exec vp test run apps/server/src/provider/pi/PiJsonlRpcClient.test.ts \
+  apps/server/src/provider/Layers/PiAdapter.test.ts \
+  apps/server/src/provider/Layers/PiProvider.test.ts
 ```
 
 ## GSTACK REVIEW REPORT

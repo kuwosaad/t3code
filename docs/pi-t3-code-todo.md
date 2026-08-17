@@ -42,6 +42,7 @@ Make Pi available inside T3 Code as a provider, while keeping Pi as the runtime 
 - [x] Render bash tools as command execution cards
 - [x] Render Titan calls as MCP/tool cards
 - [x] Add fixture-based mapping tests
+- [x] Make fixture lookup independent of the test process working directory
 - [x] Capture live Pi JSONL fixtures from a real model run
 - [x] Render file edits as file change cards with fixture coverage
 - [x] Render subagent calls as collaboration agent cards with fixture coverage
@@ -83,10 +84,11 @@ Make Pi available inside T3 Code as a provider, while keeping Pi as the runtime 
 - [ ] Stop session kills Pi process
 - [ ] Existing providers still work: Codex, Claude, Cursor, OpenCode
 
-## Current verification snapshot
+## Current verification snapshot (2026-08-18 migration)
 
-- [x] `bun typecheck`
-- [x] `bun lint` — existing warnings only
-- [x] `apps/server`: ProviderRegistry + PiJsonlRpcClient + PiAdapter tests
-- [x] `apps/web`: ProviderSettingsForm tests
-- [x] `packages/contracts`: settings tests
+- [x] Focused server, contracts, and web typechecks
+- [x] Targeted PI lint with no findings
+- [x] Root PI/provider/settings suite: 6 files, 105 tests passed
+- [x] PI suite from `apps/server`: 3 files, 19 tests passed
+- [x] Live PI RPC smoke check for state, commands, and model discovery
+- [ ] Full end-to-end T3 UI smoke test (requires launching a T3 client)
