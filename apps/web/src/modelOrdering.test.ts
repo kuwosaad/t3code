@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId } from "@t3tools/contracts";
 
 import {
+  groupModelsBySubProvider,
   providerModelKey,
   sortModelsForProviderInstance,
   sortProviderModelItems,
@@ -11,6 +12,23 @@ const CODEX_WORK_ID = ProviderInstanceId.make("codex_work");
 const CLAUDE_ID = ProviderInstanceId.make("claudeAgent");
 
 describe("model ordering", () => {
+  it("groups sub-provider models contiguously and favorites first within each group", () => {
+    const models = [
+      { slug: "grok-luna", subProvider: "Grok" },
+      { slug: "pi-luna", subProvider: "Pi" },
+      { slug: "grok-fast", subProvider: "Grok" },
+      { slug: "fallback" },
+    ];
+
+    expect(
+      groupModelsBySubProvider(models, { isFavorite: (model) => model.slug === "grok-fast" }),
+    ).toEqual([
+      { subProvider: "Grok", models: [models[2], models[0]] },
+      { subProvider: "Pi", models: [models[1]] },
+      { subProvider: undefined, models: [models[3]] },
+    ]);
+  });
+
   it("groups favorites first while preserving provider model order inside each group", () => {
     const models = [
       { slug: "gpt-5.5" },

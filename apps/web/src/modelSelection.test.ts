@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "./providerInstances";
 import {
   getAppModelOptionsForInstance,
+  migrateLegacyPiFavorites,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
 } from "./modelSelection";
@@ -55,6 +56,73 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
+  it("migrates ambiguous legacy PI favorites to every matching provider slug", () => {
+    const pi = ProviderInstanceId.make("pi");
+    const codex = ProviderInstanceId.make("codex");
+    const providers = [
+      {
+        ...provider({ provider: ProviderDriverKind.make("pi"), instanceId: "pi" }),
+        models: [
+          {
+            slug: "pi/anthropic/gpt-5.6-luna",
+            name: "gpt-5.6-luna",
+            subProvider: "anthropic",
+            isCustom: false,
+            capabilities: {},
+          },
+          {
+            slug: "pi/grok/gpt-5.6-luna",
+            name: "gpt-5.6-luna",
+            subProvider: "grok",
+            isCustom: false,
+            capabilities: {},
+          },
+        ],
+      },
+      provider({ instanceId: "codex", models: ["gpt-5.6-luna"] }),
+    ];
+    const entries = deriveProviderInstanceEntries(providers);
+
+    expect(
+      migrateLegacyPiFavorites(
+        [
+          { provider: pi, model: "gpt-5.6-luna" },
+          { provider: pi, model: "gpt-5.6-luna" },
+          { provider: codex, model: "gpt-5.6-luna" },
+          { provider: pi, model: "pi/grok/gpt-5.6-luna" },
+        ],
+        entries,
+      ),
+    ).toEqual([
+      { provider: pi, model: "pi/anthropic/gpt-5.6-luna" },
+      { provider: pi, model: "pi/grok/gpt-5.6-luna" },
+      { provider: codex, model: "gpt-5.6-luna" },
+    ]);
+  });
+
+  it("leaves unknown, qualified, and non-PI favorites unchanged", () => {
+    const pi = ProviderInstanceId.make("pi");
+    const codex = ProviderInstanceId.make("codex");
+    const favorites = [
+      { provider: pi, model: "unknown-model" },
+      { provider: pi, model: "pi/grok/already-qualified" },
+      { provider: codex, model: "gpt-5.6-luna" },
+      { provider: codex, model: "gpt-5.6-luna" },
+    ];
+
+    expect(
+      migrateLegacyPiFavorites(
+        favorites,
+        [
+          {
+            ...provider({ provider: ProviderDriverKind.make("pi"), instanceId: "pi" }),
+            models: [],
+          },
+        ].map((snapshot) => deriveProviderInstanceEntries([snapshot])[0]!),
+      ),
+    ).toBe(favorites);
+  });
+
   it("preserves server-provided legacy model metadata", () => {
     const baseProvider = provider({
       instanceId: "claudeAgent",

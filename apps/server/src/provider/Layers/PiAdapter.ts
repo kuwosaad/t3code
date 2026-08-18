@@ -34,6 +34,7 @@ import {
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { PiJsonlRpcClient } from "../pi/PiJsonlRpcClient.ts";
+import { parsePiModelSlug } from "../pi/PiModelSlug.ts";
 import {
   isPiExtensionUiRequest,
   isPiRpcResponse,
@@ -81,6 +82,24 @@ function piArgsFromSettings(settings: PiSettings): ReadonlyArray<string> {
   return args;
 }
 
+function piSettingsForModelSelection(
+  settings: PiSettings,
+  modelSelection: ProviderSessionStartInput["modelSelection"],
+  boundInstanceId: ProviderInstanceId,
+): PiSettings {
+  if (modelSelection?.instanceId !== boundInstanceId) return settings;
+  const parsed = parsePiModelSlug(modelSelection.model);
+  if (parsed) {
+    return {
+      ...settings,
+      ...(parsed.provider ? { provider: parsed.provider } : {}),
+      model: parsed.model,
+    };
+  }
+  const selectedModel = modelSelection.model.trim();
+  return selectedModel.length > 0 ? { ...settings, model: selectedModel } : settings;
+}
+
 function piEnvFromSettings(
   settings: PiSettings,
   environment: NodeJS.ProcessEnv,
@@ -116,6 +135,29 @@ function textFromUnknown(value: unknown): string {
   if (typeof value === "string") return value;
   if (!value || typeof value !== "object") return "";
   return textFromRecord(value as Record<string, unknown>);
+}
+
+function textDeltaFromPiMessage(
+  event: PiRpcEvent,
+):
+  | { readonly streamKind: "assistant_text" | "reasoning_text"; readonly delta: string }
+  | undefined {
+  const record = event as Record<string, unknown>;
+  const assistantMessageEvent = record.assistantMessageEvent;
+  if (assistantMessageEvent && typeof assistantMessageEvent === "object") {
+    const messageEvent = assistantMessageEvent as Record<string, unknown>;
+    if (typeof messageEvent.delta !== "string") return undefined;
+    if (messageEvent.type === "text_delta") {
+      return { streamKind: "assistant_text", delta: messageEvent.delta };
+    }
+    if (messageEvent.type === "thinking_delta") {
+      return { streamKind: "reasoning_text", delta: messageEvent.delta };
+    }
+    return undefined;
+  }
+
+  const delta = textFromUnknown(event);
+  return delta.length > 0 ? { streamKind: "assistant_text", delta } : undefined;
 }
 
 function messageRole(value: unknown): string | undefined {
@@ -494,8 +536,8 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
         }
 
         case "message_update": {
-          const delta = textFromUnknown(event);
-          if (delta.length > 0) {
+          const delta = textDeltaFromPiMessage(event);
+          if (delta) {
             yield* emit({
               ...(yield* buildEventBase({
                 threadId,
@@ -506,7 +548,7 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
                 raw: event,
               })),
               type: "content.delta" as const,
-              payload: { streamKind: "assistant_text" as const, delta },
+              payload: { streamKind: delta.streamKind, delta: delta.delta },
             });
           }
           break;
@@ -618,6 +660,9 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
           yield* completeActiveTurn(context, event);
           break;
 
+        case "agent_settled":
+          break;
+
         case "process_exit": {
           const code = (event as Record<string, unknown>).code;
           const signal = (event as Record<string, unknown>).signal;
@@ -658,12 +703,18 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
       const existing = sessions.get(input.threadId);
       if (existing) return existing.session as unknown as ProviderSession;
 
+      const effectiveSettings = piSettingsForModelSelection(
+        piSettings,
+        input.modelSelection,
+        boundInstanceId,
+      );
+
       const sessionScope = yield* Scope.make();
       const client = new PiJsonlRpcClient({
-        binaryPath: piSettings.binaryPath,
+        binaryPath: effectiveSettings.binaryPath,
         cwd: input.cwd,
-        env: piEnvFromSettings(piSettings, options?.environment ?? process.env),
-        args: piArgsFromSettings(piSettings),
+        env: piEnvFromSettings(effectiveSettings, options?.environment ?? process.env),
+        args: piArgsFromSettings(effectiveSettings),
       });
 
       const createdAt = yield* nowIso;
@@ -673,7 +724,7 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
         status: "connecting" as const,
         runtimeMode: input.runtimeMode,
         ...(input.cwd ? { cwd: input.cwd } : {}),
-        ...(piSettings.model ? { model: piSettings.model } : {}),
+        ...(effectiveSettings.model ? { model: effectiveSettings.model } : {}),
         threadId: input.threadId,
         createdAt,
         updatedAt: createdAt,

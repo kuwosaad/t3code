@@ -128,4 +128,18 @@ describe("scoreModelPickerSearch", () => {
       ),
     ).not.toBeNull();
   });
+
+  it("matches a Pi model by its underlying provider label", () => {
+    expect(
+      scoreModelPickerSearch(
+        {
+          driverKind: "pi",
+          providerDisplayName: "Pi",
+          name: "gpt-5.6-luna",
+          subProvider: "grok",
+        },
+        "grok",
+      ),
+    ).not.toBeNull();
+  });
 });

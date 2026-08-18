@@ -10,6 +10,11 @@ export interface ProviderModelItem extends ModelSlugItem {
   readonly instanceId: ProviderInstanceId;
 }
 
+export interface SubProviderModelGroup<T> {
+  readonly subProvider: string | undefined;
+  readonly models: ReadonlyArray<T>;
+}
+
 export function providerModelKey(instanceId: ProviderInstanceId, slug: string): string {
   return `${instanceId}:${slug}`;
 }
@@ -30,6 +35,32 @@ function byOptionalRank<T>(rank: (item: T) => number | undefined): Order.Order<T
 
 function byTrueFirst<T>(predicate: (item: T) => boolean): Order.Order<T> {
   return Order.mapInput(Order.flip(Order.Boolean), predicate);
+}
+
+export function groupModelsBySubProvider<T extends { readonly subProvider?: string }>(
+  models: ReadonlyArray<T>,
+  options?: { readonly isFavorite?: (model: T) => boolean },
+): ReadonlyArray<SubProviderModelGroup<T>> {
+  const isFavorite = options?.isFavorite;
+  const groups = new Map<string, { subProvider: string | undefined; models: T[] }>();
+  for (const model of models) {
+    const subProvider = model.subProvider?.trim() || undefined;
+    const key = subProvider?.toLocaleLowerCase() ?? "";
+    const group = groups.get(key);
+    if (group) {
+      group.models.push(model);
+    } else {
+      groups.set(key, { subProvider, models: [model] });
+    }
+  }
+
+  return [...groups.values()].map((group) => ({
+    subProvider: group.subProvider,
+    models:
+      isFavorite === undefined
+        ? group.models
+        : group.models.toSorted((a, b) => Number(isFavorite(b)) - Number(isFavorite(a))),
+  }));
 }
 
 export function sortModelsForProviderInstance<T extends ModelSlugItem>(

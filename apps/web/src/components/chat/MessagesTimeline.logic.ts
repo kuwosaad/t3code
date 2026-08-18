@@ -453,6 +453,8 @@ export function deriveMessagesTimelineRows(input: {
   expandedTurnIds?: ReadonlySet<TurnId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
+  /** True during the optimistic send/turn handoff, before a server turn exists. */
+  activeTurnInProgress?: boolean;
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
@@ -633,7 +635,15 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
-  if (input.isWorking) {
+  // Session state can lead the local dispatch flag: immediately after send,
+  // the sidebar already knows a turn is running while `isWorking` is briefly
+  // false between the local request and the first provider event. Keep the
+  // conversation non-empty from the authoritative turn lifecycle as well.
+  if (
+    input.isWorking ||
+    unsettledTurnId !== null ||
+    (input.activeTurnInProgress === true && input.timelineEntries.length > 0)
+  ) {
     nextRows.push({
       kind: "working",
       id: "working-indicator-row",

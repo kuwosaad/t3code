@@ -18,6 +18,7 @@ import {
 import { PiJsonlRpcClient } from "../pi/PiJsonlRpcClient.ts";
 import { runPiVersion } from "../pi/PiSystem.ts";
 import type { PiModelInfo } from "../pi/PiRpcTypes.ts";
+import { makePiModelSlug } from "../pi/PiModelSlug.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 
 class PiProbeError extends Data.TaggedError("PiProbeError")<{
@@ -64,6 +65,35 @@ function modelName(modelId: string): string {
   return parts[parts.length - 1] ?? modelId;
 }
 
+function normalizedPiModelPair(
+  provider: string | undefined,
+  modelId: string,
+): { readonly provider: string | undefined; readonly model: string } {
+  const normalizedProvider = nonEmptyProbeString(provider);
+  const normalizedModel = modelId.trim();
+  if (normalizedProvider && normalizedModel.startsWith(`${normalizedProvider}/`)) {
+    return {
+      provider: normalizedProvider,
+      model: normalizedModel.slice(normalizedProvider.length + 1),
+    };
+  }
+  if (!normalizedProvider) {
+    const separatorIndex = normalizedModel.indexOf("/");
+    if (separatorIndex > 0 && separatorIndex < normalizedModel.length - 1) {
+      return {
+        provider: normalizedModel.slice(0, separatorIndex),
+        model: normalizedModel.slice(separatorIndex + 1),
+      };
+    }
+  }
+  return { provider: normalizedProvider, model: normalizedModel };
+}
+
+function piModelPairKey(provider: string | undefined, modelId: string): string {
+  const pair = normalizedPiModelPair(provider, modelId);
+  return `${pair.provider ?? ""}\u0000${pair.model}`;
+}
+
 function formatPiVersionFailure(detail: string): string {
   return detail.toLowerCase().includes("enoent")
     ? "Pi CLI was not found. Install Pi or set the full path to the `pi` binary in provider settings."
@@ -80,22 +110,31 @@ function modelsFromPi(input: {
 }): ReadonlyArray<ServerProviderModel> {
   const capabilities: ModelCapabilities = {}; // Pi has no option descriptors yet
 
-  const builtIn: ReadonlyArray<ServerProviderModel> = [
+  const configuredProvider = nonEmptyProbeString(input.settings.provider);
+  const configuredModel = input.settings.model || "anthropic/claude-sonnet-4";
+  const builtIn: ServerProviderModel[] = [
     {
-      slug: modelSlug(input.settings.model || "anthropic/claude-sonnet-4"),
-      name: `Pi (${input.settings.model || "anthropic/claude-sonnet-4"})`,
+      slug: modelSlug(configuredModel),
+      name: `Pi (${configuredModel})`,
       isCustom: false,
       capabilities,
+      ...(configuredProvider ? { subProvider: configuredProvider } : {}),
     },
-    ...input.liveModels.map(
-      (m): ServerProviderModel => ({
-        slug: modelSlug(m.id),
-        name: modelName(m.id),
-        isCustom: false,
-        capabilities,
-      }),
-    ),
   ];
+  const seenLiveModels = new Set<string>([piModelPairKey(configuredProvider, configuredModel)]);
+  for (const model of input.liveModels) {
+    const provider = nonEmptyProbeString(model.provider);
+    const key = piModelPairKey(provider, model.id);
+    if (seenLiveModels.has(key)) continue;
+    seenLiveModels.add(key);
+    builtIn.push({
+      slug: makePiModelSlug(provider, model.id),
+      name: modelName(model.id),
+      isCustom: false,
+      capabilities,
+      ...(provider ? { subProvider: provider } : {}),
+    });
+  }
 
   return providerModelsFromSettings(builtIn, input.settings.customModels, capabilities);
 }

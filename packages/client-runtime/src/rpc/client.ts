@@ -24,6 +24,7 @@ export class EnvironmentRpcUnavailableError extends Schema.TaggedErrorClass<Envi
 export interface EnvironmentRpcRequestObservation {
   readonly environmentId: string;
   readonly method: string;
+  readonly input?: unknown;
 }
 
 export class EnvironmentRpcRequestObserver extends Context.Reference<{
@@ -139,6 +140,7 @@ export const request = Effect.fn("EnvironmentRpc.request")(function* <
   const completeObservation = yield* observer.observe({
     environmentId: supervisor.target.environmentId,
     method: tag,
+    input,
   });
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
 });

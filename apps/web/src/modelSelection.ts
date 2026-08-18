@@ -79,6 +79,11 @@ export interface AppModelOption {
   isLegacy?: boolean;
 }
 
+export interface FavoriteModelSelection {
+  readonly provider: ProviderInstanceId;
+  readonly model: string;
+}
+
 function toAppModelOption(model: ServerProvider["models"][number]): AppModelOption {
   const option: AppModelOption = {
     slug: model.slug,
@@ -90,6 +95,79 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
   if (model.isDefault) option.isDefault = true;
   if (model.isLegacy) option.isLegacy = true;
   return option;
+}
+
+function rawIdFromQualifiedPiSlug(
+  model: Pick<ServerProvider["models"][number], "slug" | "subProvider">,
+): string | undefined {
+  if (!model.subProvider || !model.slug.startsWith("pi/")) return undefined;
+  const providerSeparator = model.slug.indexOf("/", "pi/".length);
+  if (providerSeparator === -1) return undefined;
+  return model.slug.slice(providerSeparator + 1);
+}
+
+/**
+ * Migrate favorites written before PI models had provider-qualified slugs.
+ *
+ * A raw model id is only rewritten when the current PI inventory proves its
+ * provider-qualified slug. If several PI subproviders expose the same raw id,
+ * retain one favorite for each exact provider/model pair so the ambiguity is
+ * visible in the picker instead of being silently resolved.
+ */
+export function migrateLegacyPiFavorites(
+  favorites: ReadonlyArray<FavoriteModelSelection>,
+  providerEntries: ReadonlyArray<
+    Pick<
+      ProviderInstanceEntry,
+      "instanceId" | "driverKind" | "models" | "enabled" | "isAvailable" | "status"
+    >
+  >,
+): ReadonlyArray<FavoriteModelSelection> {
+  const piEntries = providerEntries.filter(
+    (entry) =>
+      entry.driverKind === ProviderDriverKind.make("pi") &&
+      entry.enabled &&
+      entry.isAvailable &&
+      entry.status === "ready",
+  );
+  if (piEntries.length === 0) return favorites;
+
+  const migrated: FavoriteModelSelection[] = [];
+  const seen = new Set<string>();
+  let changed = false;
+  const addFavorite = (favorite: FavoriteModelSelection) => {
+    const key = `${favorite.provider}\u0000${favorite.model}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    migrated.push(favorite);
+  };
+
+  for (const favorite of favorites) {
+    const piEntry = piEntries.find((entry) => entry.instanceId === favorite.provider);
+    if (!piEntry) {
+      migrated.push(favorite);
+      continue;
+    }
+    if (favorite.model.startsWith("pi/")) {
+      addFavorite(favorite);
+      continue;
+    }
+
+    const matches = piEntry.models.filter(
+      (model) => rawIdFromQualifiedPiSlug(model) === favorite.model,
+    );
+    if (matches.length === 0) {
+      migrated.push(favorite);
+      continue;
+    }
+
+    changed = true;
+    for (const match of matches) {
+      addFavorite({ provider: favorite.provider, model: match.slug });
+    }
+  }
+
+  return changed || migrated.length !== favorites.length ? migrated : favorites;
 }
 
 function readInstanceModelPreferences(

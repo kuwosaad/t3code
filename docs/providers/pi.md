@@ -80,6 +80,10 @@ anthropic/claude-sonnet-4
 
 If these are blank, Pi chooses its normal default model.
 
+Existing threads may still carry a legacy unqualified model selection. For those selections, T3
+Code keeps the configured `Pi model provider` and passes the selected raw value as Pi's `--model`
+argument; it does not infer an arbitrary provider from the model id.
+
 ## Session And Config Directories
 
 Use these only when you want this T3 Code provider to use a different Pi environment.

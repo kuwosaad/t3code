@@ -1,0 +1,104 @@
+#!/bin/sh
+set -eu
+
+REPO_DIR=""
+SCRIPT_PATH=$0
+
+case "$SCRIPT_PATH" in
+  /*) ;;
+  *) SCRIPT_PATH="$(pwd -P)/$SCRIPT_PATH" ;;
+esac
+
+while [ -L "$SCRIPT_PATH" ]; do
+  LINK=$(readlink "$SCRIPT_PATH")
+  SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
+  case "$LINK" in
+    /*) SCRIPT_PATH=$LINK ;;
+    *) SCRIPT_PATH="$SCRIPT_DIR/$LINK" ;;
+  esac
+  SCRIPT_PATH="$(CDPATH= cd -P "$(dirname "$SCRIPT_PATH")" && pwd -P)/$(basename "$SCRIPT_PATH")"
+done
+
+REPO_DIR=$(CDPATH= cd -P "$(dirname "$SCRIPT_PATH")/.." 2>/dev/null && pwd -P) || {
+  echo "t3: cannot locate the PI-enabled T3 checkout." >&2
+  exit 1
+}
+
+NODE_BIN=${T3_NODE_BIN:-}
+RUNTIME_BIN_DIR=""
+if [ -z "$NODE_BIN" ]; then
+  USER_HOME=${HOME:-}
+  if [ -z "$USER_HOME" ]; then
+    echo "t3: HOME is unset; cannot locate the bundled Node runtime." >&2
+    exit 1
+  fi
+
+  RUNTIME_ROOT="$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies"
+  NODE_BIN="$RUNTIME_ROOT/node/bin/node"
+  RUNTIME_BIN_DIR="$RUNTIME_ROOT/bin"
+  if [ ! -x "$NODE_BIN" ]; then
+    NODE_BIN=$(command -v node || true)
+    RUNTIME_BIN_DIR=""
+  fi
+fi
+RUNNER="$REPO_DIR/scripts/dev-runner.ts"
+T3_HOME="$REPO_DIR/.t3"
+T3_URL="http://localhost:5733"
+
+if [ ! -x "$NODE_BIN" ]; then
+  echo "t3: no usable Node runtime found; set T3_NODE_BIN or install Node >=24.13.1." >&2
+  exit 1
+fi
+
+if ! "$NODE_BIN" -e '
+  const [major, minor, patch] = process.versions.node.split(".").map(Number);
+  const supported = major > 24 || (major === 24 && (minor > 13 || (minor === 13 && patch >= 1)));
+  process.exit(supported ? 0 : 1);
+' >/dev/null 2>&1; then
+  echo "t3: Node runtime must be >=24.13.1: $NODE_BIN" >&2
+  exit 1
+fi
+
+if [ ! -f "$RUNNER" ]; then
+  echo "t3: T3 checkout is incomplete: $RUNNER is missing." >&2
+  exit 1
+fi
+
+if [ ! -x "$REPO_DIR/node_modules/.bin/vp" ]; then
+  echo "t3: workspace dependencies are missing: $REPO_DIR/node_modules/.bin/vp" >&2
+  exit 1
+fi
+
+# The runner launches Vite+ as a child process. Keep the same bundled tool
+# resolution as the workspace environment, regardless of the caller's cwd.
+PATH_PREFIX="$(dirname "$NODE_BIN"):$REPO_DIR/node_modules/.bin"
+if [ -n "$RUNTIME_BIN_DIR" ]; then
+  PATH_PREFIX="$PATH_PREFIX:$RUNTIME_BIN_DIR/override:$RUNTIME_BIN_DIR/fallback"
+fi
+export PATH="$PATH_PREFIX${PATH:+:$PATH}"
+
+if "$NODE_BIN" -e '
+  const http = require("node:http");
+  const ports = [5733, 13773];
+  const probe = (port) => new Promise((resolve) => {
+    const request = http.get({ hostname: "127.0.0.1", port, path: "/", timeout: 750 }, (response) => {
+      response.resume();
+      resolve(response.statusCode !== undefined && response.statusCode < 500);
+    });
+    request.on("error", () => resolve(false));
+    request.on("timeout", () => request.destroy());
+  });
+  Promise.all(ports.map(probe)).then((healthy) => process.exit(healthy.every(Boolean) ? 0 : 1));
+' >/dev/null 2>&1; then
+  if command -v open >/dev/null 2>&1; then
+    open "$T3_URL"
+  elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$T3_URL" >/dev/null 2>&1
+  else
+    echo "t3: T3 is already running at $T3_URL"
+  fi
+  exit 0
+fi
+
+cd "$REPO_DIR"
+exec "$NODE_BIN" "$RUNNER" dev --browser "$@" --home-dir "$T3_HOME"

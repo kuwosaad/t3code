@@ -14,7 +14,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { afterEach } from "vitest";
 
-import { ApprovalRequestId, PiSettings, ThreadId } from "@t3tools/contracts";
+import { ApprovalRequestId, PiSettings, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import { makePiAdapter } from "./PiAdapter.ts";
 
 const assert = NodeAssert;
@@ -186,6 +187,115 @@ it.effect("PiAdapter cleans up a session when startup fails", () =>
 
     assert.equal(Exit.isFailure(result), true);
     assert.deepEqual(yield* adapter.listSessions(), []);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("PiAdapter launches the exact provider-aware Pi model selection", () =>
+  Effect.gen(function* () {
+    const marker = NodePath.join(NodeOS.tmpdir(), `t3-pi-model-args-${Date.now()}.json`);
+    const binaryPath = makeFakePi(`
+      import * as NodeFS from "node:fs";
+      import readline from "node:readline";
+      NodeFS.writeFileSync(${JSON.stringify(marker)}, JSON.stringify(process.argv.slice(2)));
+      const rl = readline.createInterface({ input: process.stdin });
+      rl.on("line", (line) => {
+        const command = JSON.parse(line);
+        if (command.type === "get_state") {
+          process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: { sessionId: "s1", isStreaming: false } }) + "\\n");
+        }
+      });
+    `);
+    const adapter = yield* makePiAdapter(makeSettings(binaryPath));
+    const threadId = ThreadId.make("pi-thread-model-selection");
+
+    yield* adapter.startSession({
+      threadId,
+      cwd: process.cwd(),
+      runtimeMode: "full-access",
+      modelSelection: createModelSelection(ProviderInstanceId.make("pi"), "pi/grok/gpt-5.6-luna"),
+    });
+
+    assert.deepEqual(JSON.parse(NodeFS.readFileSync(marker, "utf8")), [
+      "--mode",
+      "rpc",
+      "--provider",
+      "grok",
+      "--model",
+      "gpt-5.6-luna",
+    ]);
+    NodeFS.rmSync(marker, { force: true });
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("PiAdapter preserves configured args for legacy unqualified selections", () =>
+  Effect.gen(function* () {
+    const marker = NodePath.join(NodeOS.tmpdir(), `t3-pi-legacy-model-args-${Date.now()}.json`);
+    const binaryPath = makeFakePi(`
+      import * as NodeFS from "node:fs";
+      import readline from "node:readline";
+      NodeFS.writeFileSync(${JSON.stringify(marker)}, JSON.stringify(process.argv.slice(2)));
+      const rl = readline.createInterface({ input: process.stdin });
+      rl.on("line", (line) => {
+        const command = JSON.parse(line);
+        if (command.type === "get_state") {
+          process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: { sessionId: "s1", isStreaming: false } }) + "\\n");
+        }
+      });
+    `);
+    const adapter = yield* makePiAdapter(makeSettings(binaryPath));
+
+    yield* adapter.startSession({
+      threadId: ThreadId.make("pi-thread-legacy-model-selection"),
+      cwd: process.cwd(),
+      runtimeMode: "full-access",
+      modelSelection: createModelSelection(ProviderInstanceId.make("pi"), "custom-pi-model"),
+    });
+
+    assert.deepEqual(JSON.parse(NodeFS.readFileSync(marker, "utf8")), [
+      "--mode",
+      "rpc",
+      "--provider",
+      "anthropic",
+      "--model",
+      "custom-pi-model",
+    ]);
+    NodeFS.rmSync(marker, { force: true });
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("PiAdapter preserves the configured provider for providerless Pi slugs", () =>
+  Effect.gen(function* () {
+    const marker = NodePath.join(NodeOS.tmpdir(), `t3-pi-providerless-model-${Date.now()}.json`);
+    const binaryPath = makeFakePi(`
+      import * as NodeFS from "node:fs";
+      import readline from "node:readline";
+      NodeFS.writeFileSync(${JSON.stringify(marker)}, JSON.stringify(process.argv.slice(2)));
+      const rl = readline.createInterface({ input: process.stdin });
+      rl.on("line", (line) => {
+        const command = JSON.parse(line);
+        if (command.type === "get_state") {
+          process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: { sessionId: "s1", isStreaming: false } }) + "\\n");
+        }
+      });
+    `);
+    const adapter = yield* makePiAdapter(makeSettings(binaryPath));
+
+    yield* adapter.startSession({
+      threadId: ThreadId.make("pi-thread-providerless-model-selection"),
+      cwd: process.cwd(),
+      runtimeMode: "full-access",
+      modelSelection: createModelSelection(ProviderInstanceId.make("pi"), "pi/custom-model"),
+    });
+
+    assert.deepEqual(JSON.parse(NodeFS.readFileSync(marker, "utf8")), [
+      "--mode",
+      "rpc",
+      "--provider",
+      "anthropic",
+      "--model",
+      "custom-model",
+    ]);
+    NodeFS.rmSync(marker, { force: true });
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -420,6 +530,45 @@ it.effect("PiAdapter maps source-backed text turn fixtures", () =>
       assistantDeltas.every((event) => event.itemId === assistantStarted.itemId),
       true,
     );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("PiAdapter separates PI thinking deltas and ignores agent_settled", () =>
+  Effect.gen(function* () {
+    const adapter = yield* makePiAdapter(
+      makeSettings(makeFixturePi("pi-thinking-settled-turn.jsonl")),
+    );
+    const eventsFiber = yield* Stream.runCollect(
+      Stream.takeUntil(adapter.streamEvents, (event) => event.type === "session.exited"),
+    ).pipe(Effect.forkChild);
+    const threadId = ThreadId.make("pi-thread-thinking-settled");
+
+    yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+    yield* adapter.sendTurn({ threadId, input: "hello" });
+
+    const events = [...(yield* Fiber.join(eventsFiber))];
+    const textDeltas = events
+      .filter(
+        (event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+      )
+      .map((event) => event.payload.delta);
+    const reasoningDeltas = events
+      .filter(
+        (event) => event.type === "content.delta" && event.payload.streamKind === "reasoning_text",
+      )
+      .map((event) => event.payload.delta);
+
+    assert.deepEqual(textDeltas, ["visible answer"]);
+    assert.deepEqual(reasoningDeltas, ["private reasoning"]);
+    assert.equal(
+      events.some(
+        (event) =>
+          event.type === "runtime.warning" && event.payload.detail?.type === "agent_settled",
+      ),
+      false,
+    );
+    assert.equal(events.filter((event) => event.type === "turn.completed").length, 1);
+    assert.equal(events.filter((event) => event.type === "session.exited").length, 1);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

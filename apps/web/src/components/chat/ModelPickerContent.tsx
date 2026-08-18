@@ -12,8 +12,10 @@ import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import {
   modelPickerLegacySectionKey,
   modelPickerModelKey,
+  modelPickerSubProviderSectionKey,
   parseModelPickerLegacySectionKey,
   parseModelPickerModelKey,
+  parseModelPickerSubProviderSectionKey,
 } from "./modelPickerKeys";
 import { isModelPickerNewModel } from "./modelPickerModelHighlights";
 import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
@@ -40,7 +42,11 @@ import {
   isProviderInstancePickerVisible,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
-import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
+import {
+  groupModelsBySubProvider,
+  providerModelKey,
+  sortProviderModelItems,
+} from "../../modelOrdering";
 
 type ModelPickerItem = {
   slug: string;
@@ -404,6 +410,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     ];
   }, [filteredModels, legacySection]);
 
+  const groupSubProviders = !isSearching && selectedInstanceId !== "favorites";
+  const displayModels = useMemo(() => {
+    if (!groupSubProviders) return visibleModels;
+    return groupModelsBySubProvider(visibleModels, {
+      isFavorite: (model) => favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
+    }).flatMap((group) => group.models);
+  }, [favoritesSet, groupSubProviders, visibleModels]);
+
   const toggleLegacySection = useCallback((instanceId: ProviderInstanceId) => {
     setExpandedLegacyInstances((expanded) => {
       const next = new Set(expanded);
@@ -460,7 +474,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       NonNullable<ReturnType<typeof modelPickerJumpCommandForIndex>>
     >();
     let selectableModelIndex = 0;
-    for (const model of visibleModels) {
+    for (const model of displayModels) {
       if (getModelDisabledReason?.(model.instanceId, model.slug)) {
         continue;
       }
@@ -472,7 +486,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       selectableModelIndex += 1;
     }
     return mapping;
-  }, [getModelDisabledReason, visibleModels]);
+  }, [displayModels, getModelDisabledReason]);
   const modelJumpModelKeys = useMemo(
     () => [...modelJumpCommandByKey.keys()],
     [modelJumpCommandByKey],
@@ -482,6 +496,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       ...flatModels.map((model) => modelPickerModelKey(model.instanceId, model.slug)),
       ...new Set(
         flatModels
+          .filter((model) => model.subProvider)
+          .map((model) => modelPickerSubProviderSectionKey(model.instanceId, model.subProvider!)),
+      ),
+      ...new Set(
+        flatModels
           .filter((model) => model.isLegacy)
           .map((model) => modelPickerLegacySectionKey(model.instanceId)),
       ),
@@ -489,23 +508,38 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     [flatModels],
   );
   const filteredItemKeys = useMemo((): string[] => {
-    const modelKeys = visibleModels.map((model) =>
-      modelPickerModelKey(model.instanceId, model.slug),
-    );
-    if (!legacySection) {
+    const modelKeysFor = (models: ReadonlyArray<ModelPickerItem>): string[] => {
+      if (!groupSubProviders) {
+        return models.map((model) => modelPickerModelKey(model.instanceId, model.slug));
+      }
+      return groupModelsBySubProvider(models, {
+        isFavorite: (model) => favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
+      }).flatMap((group) => [
+        ...(group.subProvider
+          ? [modelPickerSubProviderSectionKey(selectedInstanceId, group.subProvider)]
+          : []),
+        ...group.models.map((model) => modelPickerModelKey(model.instanceId, model.slug)),
+      ]);
+    };
+    if (!legacySection || !groupSubProviders) {
+      const modelKeys = modelKeysFor(visibleModels);
+      if (legacySection) modelKeys.splice(legacySection.currentModels.length, 0, legacySection.key);
       return modelKeys;
     }
-    modelKeys.splice(legacySection.currentModels.length, 0, legacySection.key);
-    return modelKeys;
-  }, [legacySection, visibleModels]);
+    return [
+      ...modelKeysFor(legacySection.currentModels),
+      legacySection.key,
+      ...(legacySection.isExpanded ? modelKeysFor(legacySection.legacyModels) : []),
+    ];
+  }, [favoritesSet, groupSubProviders, legacySection, selectedInstanceId, visibleModels]);
   const filteredModelByKey = useMemo(
     (): ReadonlyMap<string, ModelPickerItem> =>
       new Map(
-        visibleModels.map(
+        displayModels.map(
           (model) => [modelPickerModelKey(model.instanceId, model.slug), model] as const,
         ),
       ),
-    [visibleModels],
+    [displayModels],
   );
   const updateModelListScrollFades = useCallback(() => {
     const scrollElement = modelListRef.current?.getScrollableNode();
@@ -718,6 +752,21 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   extraData={modelListExtraData}
                   keyExtractor={(modelKey) => modelKey}
                   renderItem={({ item: modelKey, index }) => {
+                    const subProviderSection = parseModelPickerSubProviderSectionKey(modelKey);
+                    if (subProviderSection) {
+                      return (
+                        <ComboboxItem
+                          hideIndicator
+                          disabled
+                          index={index}
+                          value={modelKey}
+                          className="cursor-default px-2 pb-1 pt-2 text-xs font-semibold text-muted-foreground"
+                          data-model-picker-section="sub-provider"
+                        >
+                          {subProviderSection.subProvider}
+                        </ComboboxItem>
+                      );
+                    }
                     if (legacySection?.key === modelKey) {
                       return (
                         <ComboboxItem

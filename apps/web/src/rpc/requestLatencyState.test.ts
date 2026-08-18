@@ -1,4 +1,4 @@
-import { WS_METHODS } from "@t3tools/contracts";
+import { ORCHESTRATION_WS_METHODS, WS_METHODS } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -91,6 +91,48 @@ describe("requestLatencyState", () => {
         requestId: "1",
         tag: "server.updateProvider · env-1",
         thresholdMs: LONG_RUNNING_RPC_ACK_THRESHOLD_MS,
+      },
+    ]);
+  });
+
+  it("does not warn while an agent turn dispatch is still running", () => {
+    trackRpcRequestSent(
+      "1",
+      ORCHESTRATION_WS_METHODS.dispatchCommand,
+      `${ORCHESTRATION_WS_METHODS.dispatchCommand} · env-1`,
+      { type: "thread.turn.start" },
+    );
+
+    vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS * 2);
+
+    expect(getSlowRpcAckRequests()).toEqual([]);
+
+    vi.advanceTimersByTime(LONG_RUNNING_RPC_ACK_THRESHOLD_MS - SLOW_RPC_ACK_THRESHOLD_MS * 2 - 1);
+    expect(getSlowRpcAckRequests()).toEqual([]);
+
+    vi.advanceTimersByTime(1);
+    expect(getSlowRpcAckRequests()).toMatchObject([
+      {
+        requestId: "1",
+        thresholdMs: LONG_RUNNING_RPC_ACK_THRESHOLD_MS,
+      },
+    ]);
+  });
+
+  it("keeps non-turn orchestration dispatches on the ordinary threshold", () => {
+    trackRpcRequestSent(
+      "1",
+      ORCHESTRATION_WS_METHODS.dispatchCommand,
+      `${ORCHESTRATION_WS_METHODS.dispatchCommand} · env-1`,
+      { type: "thread.meta.update" },
+    );
+
+    vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS);
+
+    expect(getSlowRpcAckRequests()).toMatchObject([
+      {
+        requestId: "1",
+        thresholdMs: SLOW_RPC_ACK_THRESHOLD_MS,
       },
     ]);
   });

@@ -3,8 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   modelPickerLegacySectionKey,
   modelPickerModelKey,
+  modelPickerSubProviderSectionKey,
   parseModelPickerLegacySectionKey,
   parseModelPickerModelKey,
+  parseModelPickerSubProviderSectionKey,
 } from "./modelPickerKeys";
 
 describe("model picker item keys", () => {
@@ -27,5 +29,16 @@ describe("model picker item keys", () => {
     const key = modelPickerModelKey(instanceId, slug);
 
     expect(parseModelPickerModelKey(key)).toEqual({ instanceId, slug });
+  });
+
+  it("keeps provider section keys distinct from model and legacy keys", () => {
+    const sectionKey = modelPickerSubProviderSectionKey(ProviderInstanceId.make("pi"), "grok");
+
+    expect(sectionKey).not.toBe(modelPickerModelKey(ProviderInstanceId.make("pi"), "grok"));
+    expect(sectionKey).not.toBe(modelPickerLegacySectionKey(ProviderInstanceId.make("pi")));
+    expect(parseModelPickerSubProviderSectionKey(sectionKey)).toEqual({
+      instanceId: "pi",
+      subProvider: "grok",
+    });
   });
 });

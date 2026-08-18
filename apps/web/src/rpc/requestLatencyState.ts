@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { WS_METHODS } from "@t3tools/contracts";
+import { ORCHESTRATION_WS_METHODS, WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
 import { appAtomRegistry } from "./atomRegistry";
@@ -30,6 +30,7 @@ interface PendingRpcAckRequest {
 const pendingRpcAckRequests = new Map<string, PendingRpcAckRequest>();
 const untrackedRpcAckMethods = new Set<string>([WS_METHODS.previewAutomationConnect]);
 const longRunningRpcAckMethods = new Set<string>([
+  ORCHESTRATION_WS_METHODS.dispatchCommand,
   WS_METHODS.serverUpdateProvider,
   WS_METHODS.serverRefreshProviders,
   WS_METHODS.serverUpdateServer,
@@ -56,8 +57,20 @@ function shouldTrackRpcAck(method: string): boolean {
   );
 }
 
-function rpcAckThresholdMs(method: string): number {
-  return longRunningRpcAckMethods.has(method)
+function isThreadTurnStartDispatch(input: unknown): boolean {
+  return (
+    typeof input === "object" &&
+    input !== null &&
+    "type" in input &&
+    (input as { readonly type?: unknown }).type === "thread.turn.start"
+  );
+}
+
+function rpcAckThresholdMs(method: string, input: unknown): number {
+  const longRunning =
+    longRunningRpcAckMethods.has(method) &&
+    (method !== ORCHESTRATION_WS_METHODS.dispatchCommand || isThreadTurnStartDispatch(input));
+  return longRunning
     ? Math.max(slowRpcAckThresholdMs, LONG_RUNNING_RPC_ACK_THRESHOLD_MS)
     : slowRpcAckThresholdMs;
 }
@@ -71,7 +84,12 @@ export function getSlowRpcAckRequests(): ReadonlyArray<SlowRpcAckRequest> {
  * bare WS method (used to decide whether and how long to wait); `tag` is the
  * human-readable label shown in the toast, which defaults to the method.
  */
-export function trackRpcRequestSent(requestId: string, method: string, tag = method): void {
+export function trackRpcRequestSent(
+  requestId: string,
+  method: string,
+  tag = method,
+  input?: unknown,
+): void {
   if (!shouldTrackRpcAck(method)) {
     return;
   }
@@ -80,7 +98,7 @@ export function trackRpcRequestSent(requestId: string, method: string, tag = met
   evictOldestPendingRpcRequestIfNeeded();
 
   const startedAtMs = Date.now();
-  const thresholdMs = rpcAckThresholdMs(method);
+  const thresholdMs = rpcAckThresholdMs(method, input);
   const request: SlowRpcAckRequest = {
     requestId,
     startedAt: new Date(startedAtMs).toISOString(),

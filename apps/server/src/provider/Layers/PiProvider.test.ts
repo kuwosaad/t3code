@@ -220,3 +220,85 @@ it.effect("PiProvider includes probed Pi commands, prompts, and skills as slash 
     ]);
   }),
 );
+
+it.effect("PiProvider keeps duplicate model ids distinct by Pi provider", () =>
+  Effect.gen(function* () {
+    const binaryPath = makeFakePi(`
+      if (process.argv.includes("--version")) {
+        process.stdout.write("pi 1.2.3\\n");
+        process.exit(0);
+      }
+      import readline from "node:readline";
+      const rl = readline.createInterface({ input: process.stdin });
+      rl.on("line", (line) => {
+        const command = JSON.parse(line);
+        if (command.type === "get_available_models") {
+          process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: { models: [
+            { provider: "pi", id: "gpt-5.6-luna" },
+            { provider: "grok", id: "gpt-5.6-luna" },
+            { provider: "pi", id: "gpt-5.6-luna" }
+          ] } }) + "\\n");
+          return;
+        }
+        if (command.type === "get_commands") {
+          process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: { commands: [] } }) + "\\n");
+        }
+      });
+    `);
+
+    const status = yield* checkPiProviderStatus(makeSettings(binaryPath), process.env).pipe(
+      Effect.orDie,
+    );
+    const live = status.models.filter((model) => model.name === "gpt-5.6-luna");
+
+    assert.deepEqual(
+      live.map((model) => ({ slug: model.slug, subProvider: model.subProvider })),
+      [
+        { slug: "pi/pi/gpt-5.6-luna", subProvider: "pi" },
+        { slug: "pi/grok/gpt-5.6-luna", subProvider: "grok" },
+      ],
+    );
+  }),
+);
+
+it.effect("PiProvider does not duplicate the configured model in the live inventory", () =>
+  Effect.gen(function* () {
+    const binaryPath = makeFakePi(`
+      if (process.argv.includes("--version")) {
+        process.stdout.write("pi 1.2.3\\n");
+        process.exit(0);
+      }
+      import readline from "node:readline";
+      const rl = readline.createInterface({ input: process.stdin });
+      rl.on("line", (line) => {
+        const command = JSON.parse(line);
+        if (command.type === "get_available_models") {
+          process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: { models: [
+            { provider: "anthropic", id: "claude-sonnet-4" },
+            { provider: "grok", id: "claude-sonnet-4" }
+          ] } }) + "\\n");
+          return;
+        }
+        if (command.type === "get_commands") {
+          process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: { commands: [] } }) + "\\n");
+        }
+      });
+    `);
+    const status = yield* checkPiProviderStatus(
+      { ...makeSettings(binaryPath), model: "anthropic/claude-sonnet-4" },
+      process.env,
+    ).pipe(Effect.orDie);
+
+    const matching = status.models.filter(
+      (model) => model.subProvider === "anthropic" || model.slug === "pi/anthropic/claude-sonnet-4",
+    );
+    assert.deepEqual(
+      matching.map((model) => ({ slug: model.slug, subProvider: model.subProvider })),
+      [{ slug: "pi/anthropic/claude-sonnet-4", subProvider: "anthropic" }],
+    );
+    assert.equal(
+      status.models.filter((model) => model.slug === "pi/grok/claude-sonnet-4").length,
+      1,
+    );
+  }),
+);

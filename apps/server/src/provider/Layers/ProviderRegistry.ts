@@ -79,7 +79,8 @@ const hasModelCapabilities = (model: ServerProvider["models"][number]): boolean 
   (model.capabilities?.optionDescriptors?.length ?? 0) > 0;
 
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
-  if (provider.driver !== ProviderDriverKind.make("opencode")) {
+  const isPi = provider.driver === ProviderDriverKind.make("pi");
+  if (provider.driver !== ProviderDriverKind.make("opencode") && !isPi) {
     return true;
   }
 
@@ -92,7 +93,12 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
   const isPendingInitialProbe =
     provider.enabled && !provider.installed && provider.status === "warning";
   const didInstalledProviderProbeFail = provider.installed && provider.status === "error";
-  return isPendingInitialProbe || didInstalledProviderProbeFail;
+  const didPiRuntimeProbeFail =
+    isPi &&
+    provider.installed &&
+    provider.status === "warning" &&
+    provider.message?.includes("could not read Pi models") === true;
+  return isPendingInitialProbe || didInstalledProviderProbeFail || didPiRuntimeProbeFail;
 };
 
 const mergeProviderModels = (

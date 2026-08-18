@@ -18,6 +18,8 @@ import {
 } from "./providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import { ComposerControl, ComposerControlChevron } from "./ComposerControl";
+import { migrateLegacyPiFavorites } from "../../modelSelection";
+import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   /**
@@ -46,6 +48,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 }) {
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
+  const favorites = useClientSettings((settings) => settings.favorites ?? []);
+  const updateClientSettings = useUpdateClientSettings();
+
+  useEffect(() => {
+    const migratedFavorites = migrateLegacyPiFavorites(favorites, props.instanceEntries);
+    if (migratedFavorites === favorites) return;
+    updateClientSettings({ favorites: migratedFavorites });
+  }, [favorites, props.instanceEntries, updateClientSettings]);
 
   // Resolve the active instance entry by exact routing key. The composer
   // resolves fallbacks before rendering this component; if the selected

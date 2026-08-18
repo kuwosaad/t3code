@@ -273,6 +273,61 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("keeps the conversation non-empty when the session is running before any output arrives", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [],
+      latestTurn: {
+        turnId: "previous-turn" as never,
+        state: "completed",
+        startedAt: "2026-08-18T00:00:00Z",
+        completedAt: "2026-08-18T00:00:01Z",
+      },
+      runningTurnId: "grok-turn" as never,
+      isWorking: false,
+      activeTurnStartedAt: "2026-08-18T00:00:02Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows).toEqual([
+      {
+        kind: "working",
+        id: "working-indicator-row",
+        createdAt: "2026-08-18T00:00:02Z",
+      },
+    ]);
+  });
+
+  it("shows working after an optimistic user message before the first server turn exists", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "optimistic-user-entry",
+          kind: "message",
+          createdAt: "2026-08-18T00:00:02Z",
+          message: {
+            id: "optimistic-user" as never,
+            role: "user",
+            text: "Reply only OK.",
+            turnId: null,
+            createdAt: "2026-08-18T00:00:02Z",
+            updatedAt: "2026-08-18T00:00:02Z",
+            streaming: false,
+          },
+        },
+      ],
+      latestTurn: null,
+      runningTurnId: null,
+      isWorking: false,
+      activeTurnInProgress: true,
+      activeTurnStartedAt: "2026-08-18T00:00:02Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual(["message", "working"]);
+  });
+
   it("only enables assistant copy for the terminal assistant message in a turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
