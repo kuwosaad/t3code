@@ -22,7 +22,14 @@ import {
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
+  PROVIDER_OPTIONS,
 } from "./session-logic";
+
+describe("provider options", () => {
+  it("includes Pi in the modern provider picker", () => {
+    expect(PROVIDER_OPTIONS).toContainEqual({ value: "pi", label: "Pi", available: true });
+  });
+});
 
 let nextActivityId = 0;
 

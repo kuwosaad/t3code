@@ -10,6 +10,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { makePiTextGeneration } from "../../textGeneration/PiTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makePiAdapter } from "../Layers/PiAdapter.ts";
+import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { checkPiProviderStatus, makePendingPiProvider } from "../Layers/PiProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
@@ -26,7 +27,11 @@ const decodePiSettings = Schema.decodeSync(PiSettings);
 const DRIVER_KIND = ProviderDriverKind.make("pi");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
 
-export type PiDriverEnv = BackgroundPolicy.BackgroundPolicy | Crypto.Crypto | ServerSettingsService;
+export type PiDriverEnv =
+  | BackgroundPolicy.BackgroundPolicy
+  | Crypto.Crypto
+  | ProviderEventLoggers
+  | ServerSettingsService;
 
 const withInstanceIdentity =
   (input: {
@@ -55,6 +60,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const processEnv = mergeProviderInstanceEnvironment(environment);
+      const eventLoggers = yield* ProviderEventLoggers;
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -74,6 +80,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       const adapter = yield* makePiAdapter(effectiveConfig, {
         instanceId,
         environment: processEnv,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const textGeneration = yield* makePiTextGeneration(effectiveConfig, processEnv);
 

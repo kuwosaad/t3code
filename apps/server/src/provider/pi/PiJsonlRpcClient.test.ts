@@ -114,4 +114,28 @@ describe("PiJsonlRpcClient", () => {
       (error) => error instanceof PiRpcClientError && error.message.includes("exited with code 7"),
     );
   });
+
+  it("rejects pending requests and clears their timeout when stopped", async () => {
+    const binaryPath = makeFakePi(`
+      process.stdin.resume();
+    `);
+    const client = new PiJsonlRpcClient({ binaryPath, requestTimeoutMs: 10_000 });
+
+    await client.start();
+    const pending = assert.rejects(
+      () => client.request({ type: "get_state" }),
+      (error) => error instanceof PiRpcClientError && error.message === "Pi process stopped.",
+    );
+    await client.stop();
+    await pending;
+  });
+
+  it("allows stop to be called repeatedly after the process has exited", async () => {
+    const binaryPath = makeFakePi(`process.stdin.resume();`);
+    const client = new PiJsonlRpcClient({ binaryPath });
+
+    await client.start();
+    await client.stop();
+    await client.stop();
+  });
 });

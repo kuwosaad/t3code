@@ -63,6 +63,7 @@ export class PiJsonlRpcClient {
 
   start(): Promise<void> {
     if (this.child !== null) return Promise.resolve();
+    this.stopped = false;
 
     const child = NodeChildProcess.spawn(
       this.options.binaryPath,
@@ -122,19 +123,27 @@ export class PiJsonlRpcClient {
   stop(): Promise<void> {
     this.stopped = true;
     const child = this.child;
+    const stopError = new PiRpcClientError("Pi process stopped.");
+    this.rejectAll(stopError);
     if (child === null) {
-      this.rejectAll(new PiRpcClientError("Pi process is not running."));
       return Promise.resolve();
     }
     return new Promise((resolve) => {
-      const done = () => resolve();
+      let settled = false;
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        if (killTimer !== undefined) clearTimeout(killTimer);
+        resolve();
+      };
       child.once("exit", done);
       child.kill("SIGTERM");
-      setTimeout(() => {
+      killTimer = setTimeout(() => {
         if (this.child !== null) {
           this.child.kill("SIGKILL");
         }
-        resolve();
+        done();
       }, 2_000).unref();
     });
   }
@@ -219,10 +228,6 @@ export class PiJsonlRpcClient {
   }
 
   private rejectAll(error: PiRpcClientError): void {
-    if (this.stopped) {
-      this.pending.clear();
-      return;
-    }
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timeoutId);
       pending.reject(error);

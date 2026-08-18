@@ -32,18 +32,21 @@ import {
   ProviderAdapterSessionNotFoundError,
 } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { PiJsonlRpcClient } from "../pi/PiJsonlRpcClient.ts";
 import {
   isPiExtensionUiRequest,
   type PiExtensionUiRequest,
   type PiRpcEvent,
 } from "../pi/PiRpcTypes.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
 
 const PROVIDER = ProviderDriverKind.make("pi");
 
 export interface PiAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly nativeEventLogger?: EventNdjsonLogger;
 }
 
 interface PiSessionContext {
@@ -54,6 +57,7 @@ interface PiSessionContext {
   readonly activeToolItemIds: Map<string, RuntimeItemId>;
   readonly stopped: Ref.Ref<boolean>;
   readonly sessionScope: Scope.Closeable;
+  readonly eventQueue: Queue.Queue<PiRpcEvent>;
   activeTurnId: TurnId | undefined;
   activeAssistantItemId: RuntimeItemId | undefined;
 }
@@ -66,7 +70,8 @@ function piArgsFromSettings(settings: PiSettings): ReadonlyArray<string> {
   const args: string[] = [];
   if (settings.provider.trim().length > 0) args.push("--provider", settings.provider.trim());
   if (settings.model.trim().length > 0) args.push("--model", settings.model.trim());
-  if (settings.sessionDir.trim().length > 0) args.push("--session-dir", settings.sessionDir.trim());
+  if (settings.sessionDir.trim().length > 0)
+    args.push("--session-dir", expandHomePath(settings.sessionDir.trim()));
   if (settings.launchArgs.trim().length > 0) {
     for (const arg of settings.launchArgs.trim().split(/\s+/)) {
       if (arg.length > 0) args.push(arg);
@@ -83,9 +88,10 @@ function piEnvFromSettings(
   for (const [key, value] of Object.entries(environment)) {
     if (value !== undefined) env[key] = value;
   }
-  if (settings.configDir.trim().length > 0) env.PI_CODING_AGENT_DIR = settings.configDir.trim();
+  if (settings.configDir.trim().length > 0)
+    env.PI_CODING_AGENT_DIR = expandHomePath(settings.configDir.trim());
   if (settings.sessionDir.trim().length > 0)
-    env.PI_CODING_AGENT_SESSION_DIR = settings.sessionDir.trim();
+    env.PI_CODING_AGENT_SESSION_DIR = expandHomePath(settings.sessionDir.trim());
   return env;
 }
 
@@ -170,6 +176,7 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
   return Effect.gen(function* () {
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("pi");
     const crypto = yield* Crypto.Crypto;
+    const nativeEventLogger = options?.nativeEventLogger;
     const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
     const sessions = new Map<ThreadId, PiSessionContext>();
 
@@ -229,6 +236,36 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
 
     const emit = (event: ProviderRuntimeEvent) =>
       Queue.offer(runtimeEvents, event).pipe(Effect.asVoid);
+
+    const writeNativeEventBestEffort = Effect.fn("writePiNativeEventBestEffort")(function* (
+      context: PiSessionContext,
+      event: PiRpcEvent,
+    ) {
+      if (!nativeEventLogger) return;
+      const observedAt = yield* nowIso;
+      const eventType =
+        typeof (event as Record<string, unknown>).type === "string"
+          ? (event as Record<string, unknown>).type
+          : "unknown";
+      yield* nativeEventLogger
+        .write(
+          {
+            observedAt,
+            event: {
+              id: yield* randomUUIDv4,
+              kind: isPiExtensionUiRequest(event) ? "request" : "notification",
+              provider: PROVIDER,
+              createdAt: observedAt,
+              method: `pi.rpc.${eventType}`,
+              threadId: context.session.threadId,
+              ...(context.activeTurnId ? { turnId: context.activeTurnId } : {}),
+              payload: event,
+            },
+          },
+          context.session.threadId,
+        )
+        .pipe(Effect.catchCause(() => Effect.void));
+    });
 
     // ── session helpers ────────────────────────────────────────────────────
 
@@ -408,6 +445,8 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
       event: PiRpcEvent,
     ) {
       if (yield* Ref.get(context.stopped)) return;
+
+      yield* writeNativeEventBestEffort(context, event);
 
       const threadId = context.session.threadId as unknown as ThreadId;
       const turnId = context.activeTurnId;
@@ -640,59 +679,73 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
         activeToolItemIds: new Map(),
         stopped: yield* Ref.make(false),
         sessionScope,
+        eventQueue: yield* Queue.unbounded<PiRpcEvent>(),
         activeTurnId: undefined,
         activeAssistantItemId: undefined,
       };
       sessions.set(input.threadId, context);
+      yield* Scope.addFinalizer(context.sessionScope, Queue.shutdown(context.eventQueue));
 
-      // Wire event pump — forked into session scope for automatic teardown
+      // Wire one ordered event pump into the session scope. The RPC callback is
+      // synchronous, so it only enqueues; all mapping happens serially here.
       client.onEvent((event) => {
-        handlePiEvent(context, event).pipe(Effect.ignoreCause, Effect.runFork);
+        try {
+          Effect.runSync(Queue.offer(context.eventQueue, event));
+        } catch {
+          // Session teardown may race with the final process event.
+        }
       });
+      yield* Effect.forever(
+        Queue.take(context.eventQueue).pipe(
+          Effect.flatMap((event) => handlePiEvent(context, event)),
+          Effect.ignoreCause,
+        ),
+      ).pipe(Effect.forkIn(context.sessionScope));
 
       // Start the Pi process
-      yield* Effect.tryPromise({
-        try: () => client.start(),
-        catch: (cause) =>
-          new ProviderAdapterProcessError({
-            provider: PROVIDER,
-            threadId: input.threadId,
-            detail: cause instanceof Error ? cause.message : String(cause),
-            cause,
-          }),
-      });
+      return yield* Effect.gen(function* () {
+        yield* Effect.tryPromise({
+          try: () => client.start(),
+          catch: (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId: input.threadId,
+              detail: cause instanceof Error ? cause.message : String(cause),
+              cause,
+            }),
+        });
 
-      // Get Pi state
-      yield* Effect.tryPromise({
-        try: () => client.request({ type: "get_state" } as any),
-        catch: (cause) =>
-          new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "get_state",
-            detail: cause instanceof Error ? cause.message : String(cause),
-            cause,
-          }),
-      });
+        yield* Effect.tryPromise({
+          try: () => client.request({ type: "get_state" } as any),
+          catch: (cause) =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "get_state",
+              detail: cause instanceof Error ? cause.message : String(cause),
+              cause,
+            }),
+        });
 
-      yield* updateSession(context, { status: "ready" as const });
+        yield* updateSession(context, { status: "ready" as const });
 
-      yield* emit({
-        ...(yield* buildEventBase({ threadId: input.threadId })),
-        type: "session.started",
-        payload: { message: "Pi RPC session started." },
-      });
-      yield* emit({
-        ...(yield* buildEventBase({ threadId: input.threadId })),
-        type: "thread.started",
-        payload: {},
-      });
-      yield* emit({
-        ...(yield* buildEventBase({ threadId: input.threadId })),
-        type: "session.state.changed",
-        payload: { state: "ready" },
-      });
+        yield* emit({
+          ...(yield* buildEventBase({ threadId: input.threadId })),
+          type: "session.started",
+          payload: { message: "Pi RPC session started." },
+        });
+        yield* emit({
+          ...(yield* buildEventBase({ threadId: input.threadId })),
+          type: "thread.started",
+          payload: {},
+        });
+        yield* emit({
+          ...(yield* buildEventBase({ threadId: input.threadId })),
+          type: "session.state.changed",
+          payload: { state: "ready" },
+        });
 
-      return context.session as unknown as ProviderSession;
+        return context.session as unknown as ProviderSession;
+      }).pipe(Effect.onError(() => stopPiContext(context).pipe(Effect.ignoreCause)));
     });
 
     const sendTurn = Effect.fn("sendTurn")(function* (input: ProviderSendTurnInput) {

@@ -16,6 +16,7 @@ import {
   sanitizeThreadTitle,
 } from "./TextGenerationUtils.ts";
 import { runPiPrint } from "../provider/pi/PiSystem.ts";
+import { expandHomePath } from "../pathExpansion.ts";
 
 const PI_TEXT_GENERATION_TIMEOUT_MS = 60_000;
 
@@ -27,9 +28,10 @@ function piEnvFromSettings(
   for (const [key, value] of Object.entries(environment)) {
     if (value !== undefined) env[key] = value;
   }
-  if (settings.configDir.trim().length > 0) env.PI_CODING_AGENT_DIR = settings.configDir.trim();
+  if (settings.configDir.trim().length > 0)
+    env.PI_CODING_AGENT_DIR = expandHomePath(settings.configDir.trim());
   if (settings.sessionDir.trim().length > 0)
-    env.PI_CODING_AGENT_SESSION_DIR = settings.sessionDir.trim();
+    env.PI_CODING_AGENT_SESSION_DIR = expandHomePath(settings.sessionDir.trim());
   return env;
 }
 

@@ -57,7 +57,8 @@ Make Pi available inside T3 Code as a provider, while keeping Pi as the runtime 
 - [x] Fetch Pi `get_commands`
 - [x] Surface Pi extension commands in T3 command UI
 - [x] Surface Pi prompt templates in T3 command UI
-- [x] Surface Pi skills as `skill:<name>` commands
+- [x] Surface Pi skills as slash commands (with `skill:<name>` command IDs)
+- [ ] Preserve PI skill source metadata for T3's structured `$skill` picker
 
 ### PR 5 — Polish + docs
 
@@ -88,7 +89,9 @@ Make Pi available inside T3 Code as a provider, while keeping Pi as the runtime 
 
 - [x] Focused server, contracts, and web typechecks
 - [x] Targeted PI lint with no findings
-- [x] Root PI/provider/settings suite: 6 files, 105 tests passed
-- [x] PI suite from `apps/server`: 3 files, 19 tests passed
+- [x] Provider/settings regression suite: 6 files, 105 tests passed
+- [x] PI hardening suite: 3 files, 26 tests passed
+- [x] Modern web provider metadata/session suite: 2 files, 71 tests passed
+- [x] Combined provider regression suite: 8 files, 183 tests passed
 - [x] Live PI RPC smoke check for state, commands, and model discovery
 - [ ] Full end-to-end T3 UI smoke test (requires launching a T3 client)

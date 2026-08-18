@@ -8,6 +8,7 @@ import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -164,6 +165,27 @@ it.effect("PiAdapter finalizes the turn when prompt returns success false", () =
     const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
     assert.equal(session?.status, "error");
     assert.equal(session?.lastError, "No API key found");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("PiAdapter cleans up a session when startup fails", () =>
+  Effect.gen(function* () {
+    const binaryPath = makeFakePi(`
+      import readline from "node:readline";
+      const rl = readline.createInterface({ input: process.stdin });
+      rl.on("line", (line) => {
+        const command = JSON.parse(line);
+        if (command.type === "get_state") process.exit(7);
+      });
+    `);
+    const adapter = yield* makePiAdapter(makeSettings(binaryPath));
+    const threadId = ThreadId.make("pi-thread-startup-failure");
+    const result = yield* Effect.exit(
+      adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" }),
+    );
+
+    assert.equal(Exit.isFailure(result), true);
+    assert.deepEqual(yield* adapter.listSessions(), []);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -375,6 +397,37 @@ it.effect("PiAdapter maps source-backed text turn fixtures", () =>
       assistantDeltas.every((event) => event.itemId === assistantStarted.itemId),
       true,
     );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("PiAdapter writes native RPC events through the provider logger", () =>
+  Effect.gen(function* () {
+    const writes: Array<{ event: unknown; threadId: unknown }> = [];
+    const adapter = yield* makePiAdapter(makeSettings(makeFixturePi("pi-text-turn.jsonl")), {
+      nativeEventLogger: {
+        filePath: "pi-test.log",
+        write: (event, threadId) =>
+          Effect.sync(() => {
+            writes.push({ event, threadId });
+          }),
+        close: () => Effect.void,
+      },
+    });
+    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 12)).pipe(
+      Effect.forkChild,
+    );
+    const threadId = ThreadId.make("pi-thread-native-log");
+
+    yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+    yield* adapter.sendTurn({ threadId, input: "hello" });
+    yield* Fiber.join(eventsFiber);
+
+    assert.equal(writes.length > 0, true);
+    const first = writes[0]?.event as { observedAt?: unknown; event?: Record<string, unknown> };
+    assert.equal(typeof first?.observedAt, "string");
+    assert.equal(first?.event?.provider, "pi");
+    assert.equal(first?.event?.method, "pi.rpc.agent_start");
+    assert.equal(writes[0]?.threadId, threadId);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

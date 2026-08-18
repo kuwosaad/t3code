@@ -18,6 +18,7 @@ import {
 import { PiJsonlRpcClient } from "../pi/PiJsonlRpcClient.ts";
 import { runPiVersion } from "../pi/PiSystem.ts";
 import type { PiModelInfo } from "../pi/PiRpcTypes.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
 
 class PiProbeError extends Data.TaggedError("PiProbeError")<{
   readonly detail: string;
@@ -41,9 +42,10 @@ function piEnvFromSettings(
   for (const [key, value] of Object.entries(environment)) {
     if (value !== undefined) env[key] = value;
   }
-  if (settings.configDir.trim().length > 0) env.PI_CODING_AGENT_DIR = settings.configDir.trim();
+  if (settings.configDir.trim().length > 0)
+    env.PI_CODING_AGENT_DIR = expandHomePath(settings.configDir.trim());
   if (settings.sessionDir.trim().length > 0)
-    env.PI_CODING_AGENT_SESSION_DIR = settings.sessionDir.trim();
+    env.PI_CODING_AGENT_SESSION_DIR = expandHomePath(settings.sessionDir.trim());
   return env;
 }
 
@@ -140,7 +142,7 @@ async function probePiRuntime(
     binaryPath: settings.binaryPath,
     cwd: process.cwd(),
     env,
-    args: ["--provider", settings.provider || "anthropic"],
+    args: settings.provider.trim().length > 0 ? ["--provider", settings.provider.trim()] : [],
   });
   try {
     await client.start();
@@ -198,6 +200,23 @@ export function checkPiProviderStatus(
 
   return Effect.gen(function* () {
     const checkedAt = yield* nowIso;
+
+    if (!settings.enabled) {
+      return buildServerProvider({
+        presentation: PI_PRESENTATION,
+        enabled: false,
+        checkedAt,
+        models: [],
+        slashCommands: [],
+        probe: {
+          installed: false,
+          version: null,
+          status: "warning",
+          auth: { status: "unknown" },
+          message: "Pi is disabled in provider settings.",
+        },
+      });
+    }
 
     // ── version probe ──
     const versionExit = yield* Effect.tryPromise({
