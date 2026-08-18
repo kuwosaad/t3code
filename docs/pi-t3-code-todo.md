@@ -83,7 +83,7 @@ Make Pi available inside T3 Code as a provider, while keeping Pi as the runtime 
 - [ ] Approval prompt works
 - [ ] Abort works
 - [ ] Stop session kills Pi process
-- [ ] Existing providers still work: Codex, Claude, Cursor, OpenCode
+- [ ] Existing providers still work: Codex, Claude, Cursor, Grok, OpenCode
 
 ## Current verification snapshot (2026-08-18 migration)
 
