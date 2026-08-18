@@ -207,4 +207,4 @@ Before shipping a Pi change broadly, verify:
 - Input/select/editor prompts work.
 - Abort stops an active Pi turn.
 - Stopping a session kills the Pi child process.
-- Existing providers still work: Codex, Claude, Cursor, and OpenCode.
+- Existing providers still work: Codex, Claude, Cursor, Grok, and OpenCode.

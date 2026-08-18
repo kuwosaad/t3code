@@ -149,10 +149,12 @@ async function probePiRuntime(
     const response = await client.request<{ models?: ReadonlyArray<PiModelInfo> }>({
       type: "get_available_models",
     } as any);
-    const models =
-      response.success && response.data && Array.isArray(response.data.models)
-        ? response.data.models
-        : [];
+    if (!response.success) {
+      throw new PiProbeError({
+        detail: response.error || "Pi get_available_models failed.",
+      });
+    }
+    const models = response.data && Array.isArray(response.data.models) ? response.data.models : [];
 
     let slashCommands: ReadonlyArray<ServerProviderSlashCommand> = [];
     try {

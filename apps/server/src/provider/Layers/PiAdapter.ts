@@ -36,6 +36,7 @@ import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { PiJsonlRpcClient } from "../pi/PiJsonlRpcClient.ts";
 import {
   isPiExtensionUiRequest,
+  isPiRpcResponse,
   type PiExtensionUiRequest,
   type PiRpcEvent,
 } from "../pi/PiRpcTypes.ts";
@@ -448,6 +449,11 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
 
       yield* writeNativeEventBestEffort(context, event);
 
+      // Matched RPC responses are logged as native protocol traffic by the
+      // adapter, but they have already been delivered to their requester and
+      // must not become duplicate runtime warnings.
+      if (isPiRpcResponse(event)) return;
+
       const threadId = context.session.threadId as unknown as ThreadId;
       const turnId = context.activeTurnId;
 
@@ -616,6 +622,9 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
           const code = (event as Record<string, unknown>).code;
           const signal = (event as Record<string, unknown>).signal;
           const detail = `Pi process exited${typeof code === "number" ? ` with code ${code}` : ""}${typeof signal === "string" ? ` (${signal})` : ""}.`;
+          if (yield* Ref.getAndSet(context.stopped, true)) break;
+
+          sessions.delete(threadId);
           if (context.activeTurnId) {
             yield* failActiveTurn(context, detail, event);
           } else {
@@ -624,14 +633,13 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
               { status: "closed" as const, lastError: detail },
               { clearActiveTurnId: true },
             );
-            yield* emit({
-              ...(yield* buildEventBase({ threadId, raw: event })),
-              type: "session.exited" as const,
-              payload: { reason: detail, recoverable: true, exitKind: "error" as const },
-            });
           }
-          yield* Ref.set(context.stopped, true);
-          sessions.delete(threadId);
+          yield* emit({
+            ...(yield* buildEventBase({ threadId, raw: event })),
+            type: "session.exited" as const,
+            payload: { reason: detail, recoverable: true, exitKind: "error" as const },
+          });
+          yield* Scope.close(context.sessionScope, Exit.void).pipe(Effect.ignore);
           break;
         }
 
@@ -715,7 +723,7 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
             }),
         });
 
-        yield* Effect.tryPromise({
+        const stateResponse = yield* Effect.tryPromise({
           try: () => client.request({ type: "get_state" } as any),
           catch: (cause) =>
             new ProviderAdapterRequestError({
@@ -725,6 +733,13 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
               cause,
             }),
         });
+        if (!stateResponse.success) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "get_state",
+            detail: stateResponse.error || "Pi get_state failed.",
+          });
+        }
 
         yield* updateSession(context, { status: "ready" as const });
 

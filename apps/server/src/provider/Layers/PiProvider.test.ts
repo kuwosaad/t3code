@@ -153,6 +153,34 @@ it.effect("PiProvider keeps a fallback model and warning status when runtime pro
   }),
 );
 
+it.effect("PiProvider warns when Pi rejects the model probe", () =>
+  Effect.gen(function* () {
+    const binaryPath = makeFakePi(`
+      if (process.argv.includes("--version")) {
+        process.stdout.write("pi 1.2.3\\n");
+        process.exit(0);
+      }
+      import readline from "node:readline";
+      const rl = readline.createInterface({ input: process.stdin });
+      rl.on("line", (line) => {
+        const command = JSON.parse(line);
+        if (command.type === "get_available_models") {
+          process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: false, error: "models unavailable" }) + "\\n");
+        }
+      });
+    `);
+
+    const status = yield* checkPiProviderStatus(makeSettings(binaryPath), process.env).pipe(
+      Effect.orDie,
+    );
+
+    assert.equal(status.installed, true);
+    assert.equal(status.status, "warning");
+    assert.equal(status.auth.status, "unknown");
+    assert.match(status.message ?? "", /could not read Pi models or commands over RPC/);
+  }),
+);
+
 it.effect("PiProvider includes probed Pi commands, prompts, and skills as slash commands", () =>
   Effect.gen(function* () {
     const binaryPath = makeFakePi(`

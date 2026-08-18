@@ -47,6 +47,7 @@ export class PiJsonlRpcClient {
   private readonly listeners = new Set<PiRpcEventListener>();
   private readonly options: PiJsonlRpcClientOptions;
   private stopped = false;
+  private stopPromise: Promise<void> | null = null;
 
   constructor(options: PiJsonlRpcClientOptions) {
     this.options = options;
@@ -64,6 +65,7 @@ export class PiJsonlRpcClient {
   start(): Promise<void> {
     if (this.child !== null) return Promise.resolve();
     this.stopped = false;
+    this.stopPromise = null;
 
     const child = NodeChildProcess.spawn(
       this.options.binaryPath,
@@ -121,14 +123,18 @@ export class PiJsonlRpcClient {
   }
 
   stop(): Promise<void> {
+    if (this.stopPromise !== null) return this.stopPromise;
+
     this.stopped = true;
     const child = this.child;
     const stopError = new PiRpcClientError("Pi process stopped.");
     this.rejectAll(stopError);
     if (child === null) {
-      return Promise.resolve();
+      this.stopPromise = Promise.resolve();
+      return this.stopPromise;
     }
-    return new Promise((resolve) => {
+
+    this.stopPromise = new Promise((resolve) => {
       let settled = false;
       let killTimer: ReturnType<typeof setTimeout> | undefined;
       const done = () => {
@@ -146,6 +152,7 @@ export class PiJsonlRpcClient {
         done();
       }, 2_000).unref();
     });
+    return this.stopPromise;
   }
 
   async request<T = unknown>(command: Omit<PiRpcCommand, "id">): Promise<PiRpcResponse<T>> {
@@ -214,6 +221,7 @@ export class PiJsonlRpcClient {
         this.pending.delete(parsed.id);
         clearTimeout(pending.timeoutId);
         pending.resolve(parsed);
+        this.emit(parsed);
         return;
       }
     }

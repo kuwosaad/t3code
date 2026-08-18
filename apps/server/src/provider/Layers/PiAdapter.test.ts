@@ -189,6 +189,29 @@ it.effect("PiAdapter cleans up a session when startup fails", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("PiAdapter rejects a failed get_state response and cleans up", () =>
+  Effect.gen(function* () {
+    const binaryPath = makeFakePi(`
+      import readline from "node:readline";
+      const rl = readline.createInterface({ input: process.stdin });
+      rl.on("line", (line) => {
+        const command = JSON.parse(line);
+        if (command.type === "get_state") {
+          process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: false, error: "state unavailable" }) + "\\n");
+        }
+      });
+    `);
+    const adapter = yield* makePiAdapter(makeSettings(binaryPath));
+    const threadId = ThreadId.make("pi-thread-state-failure");
+    const result = yield* Effect.exit(
+      adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" }),
+    );
+
+    assert.equal(Exit.isFailure(result), true);
+    assert.deepEqual(yield* adapter.listSessions(), []);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("PiAdapter ignores successful Pi notify events", () =>
   Effect.gen(function* () {
     const adapter = yield* makePiAdapter(
@@ -423,10 +446,18 @@ it.effect("PiAdapter writes native RPC events through the provider logger", () =
     yield* Fiber.join(eventsFiber);
 
     assert.equal(writes.length > 0, true);
-    const first = writes[0]?.event as { observedAt?: unknown; event?: Record<string, unknown> };
-    assert.equal(typeof first?.observedAt, "string");
-    assert.equal(first?.event?.provider, "pi");
-    assert.equal(first?.event?.method, "pi.rpc.agent_start");
+    const nativeEvents = writes.map(
+      ({ event }) => event as { observedAt?: unknown; event?: Record<string, unknown> },
+    );
+    assert.equal(typeof nativeEvents[0]?.observedAt, "string");
+    assert.equal(
+      nativeEvents.some((event) => event.event?.method === "pi.rpc.agent_start"),
+      true,
+    );
+    assert.equal(
+      nativeEvents.some((event) => event.event?.method === "pi.rpc.response"),
+      true,
+    );
     assert.equal(writes[0]?.threadId, threadId);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -597,5 +628,45 @@ it.effect("PiAdapter maps unexpected process exit to session.exited", () =>
     assert.ok(exited);
     assert.equal(exited.payload.exitKind, "error");
     assert.equal(exited.payload.recoverable, true);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("PiAdapter settles an active turn and closes on unexpected process exit", () =>
+  Effect.gen(function* () {
+    const binaryPath = makeFakePi(`
+      import readline from "node:readline";
+      const rl = readline.createInterface({ input: process.stdin });
+      rl.on("line", (line) => {
+        const command = JSON.parse(line);
+        if (command.type === "get_state") {
+          process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: { sessionId: "s1", isStreaming: false } }) + "\\n");
+          return;
+        }
+        if (command.type === "prompt") {
+          process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data: {} }) + "\\n");
+          setTimeout(() => process.exit(11), 20);
+        }
+      });
+    `);
+    const adapter = yield* makePiAdapter(makeSettings(binaryPath));
+    const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 8)).pipe(
+      Effect.forkChild,
+    );
+    const threadId = ThreadId.make("pi-thread-active-process-exit");
+
+    yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+    yield* adapter.sendTurn({ threadId, input: "hello" });
+
+    const events = [...(yield* Fiber.join(eventsFiber))];
+    assert.equal(events.filter((event) => event.type === "session.exited").length, 1);
+    assert.equal(
+      events.some((event) => event.type === "runtime.error"),
+      true,
+    );
+    assert.equal(
+      events.some((event) => event.type === "turn.completed" && event.payload.state === "failed"),
+      true,
+    );
+    assert.deepEqual(yield* adapter.listSessions(), []);
   }).pipe(Effect.provide(NodeServices.layer)),
 );

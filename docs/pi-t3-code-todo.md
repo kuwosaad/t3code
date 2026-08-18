@@ -90,8 +90,8 @@ Make Pi available inside T3 Code as a provider, while keeping Pi as the runtime 
 - [x] Focused server, contracts, and web typechecks
 - [x] Targeted PI lint with no findings
 - [x] Provider/settings regression suite: 6 files, 105 tests passed
-- [x] PI hardening suite: 3 files, 26 tests passed
+- [x] PI hardening suite: 3 files, 30 tests passed
 - [x] Modern web provider metadata/session suite: 2 files, 71 tests passed
-- [x] Combined provider regression suite: 8 files, 183 tests passed
+- [x] Combined provider regression suite: 8 files, 187 tests passed
 - [x] Live PI RPC smoke check for state, commands, and model discovery
 - [ ] Full end-to-end T3 UI smoke test (requires launching a T3 client)

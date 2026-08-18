@@ -55,6 +55,10 @@ describe("PiJsonlRpcClient", () => {
     assert.equal(response.success, true);
     assert.deepEqual(response.data, { ok: true });
     assert.equal((events[0] as { type?: string } | undefined)?.type, "agent_start");
+    assert.equal(
+      events.filter((event) => (event as { type?: string }).type === "response").length,
+      1,
+    );
   });
 
   it("emits a json_parse_error event for malformed stdout lines", async () => {
@@ -137,5 +141,26 @@ describe("PiJsonlRpcClient", () => {
     await client.start();
     await client.stop();
     await client.stop();
+  });
+
+  it("shares one stop operation when concurrent callers stop a live process", async () => {
+    const binaryPath = makeFakePi(`process.stdin.resume();`);
+    const client = new PiJsonlRpcClient({ binaryPath });
+
+    await client.start();
+    const child = (client as any).child as { kill: (signal?: NodeJS.Signals) => boolean };
+    const signals: Array<NodeJS.Signals | undefined> = [];
+    const kill = child.kill.bind(child);
+    child.kill = (signal?: NodeJS.Signals) => {
+      signals.push(signal);
+      return kill(signal);
+    };
+
+    const first = client.stop();
+    const second = client.stop();
+    assert.strictEqual(first, second);
+    await Promise.all([first, second]);
+    assert.deepEqual(signals, ["SIGTERM"]);
+    assert.strictEqual(client.stop(), first);
   });
 });
