@@ -4,6 +4,28 @@ T3 Code is an "agent harness control surface". It enables control of the agents 
 
 Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, and OpenCode. If they're set up on your computer, T3 Code can control them.
 
+## This fork
+
+This is Saad (Kuwosa)'s current-upstream T3 Code fork, with PI integrated as a first-class provider. The integration currently includes:
+
+- PI commands, models, settings, events, and multiple provider instances
+- Exact provider/model grouping and routing in the model picker
+- Immediate working-state feedback while a turn is starting, plus quieter slow-request warnings for normal agent turns
+
+For a quick start, make the repository's `scripts/t3` launcher available as `t3` on your `PATH`, then run:
+
+```bash
+t3
+```
+
+The launcher opens the PI-enabled checkout at `http://localhost:5733`; press `Ctrl+C` in the launcher terminal to stop it. PI-specific details live in [`docs/providers/pi.md`](./docs/providers/pi.md).
+
+The next follow-up work is automatic discovery and synchronization of CLI agents, structured skills and slash-command parity, and support for session resume, model switching, and attachments.
+
+## A note from Ayanokoji
+
+The guiding principle for this fork is simple: keep T3 current while preserving each CLI agent's native capabilities. Integrations should stay small, provider-first, and reversible so upstream improvements and agent-specific behavior can continue to coexist.
+
 ## "Wait, what are you selling me?"
 
 Nothing. We built T3 Code because we wanted the best possible development experience with agents. We were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met our bar.
